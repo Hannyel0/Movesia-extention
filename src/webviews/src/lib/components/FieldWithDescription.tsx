@@ -2,6 +2,7 @@ import React, { FunctionComponent } from 'react'
 
 type FieldWithDescriptionProps = {
   title: string
+  children?: React.ReactNode
 }
 
 const FieldWithDescription: FunctionComponent<FieldWithDescriptionProps> = props => {

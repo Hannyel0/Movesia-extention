@@ -47,12 +47,25 @@
   },
   "dependencies": {
     "@hediet/node-reload": "^0.7.3",
+    "@radix-ui/react-avatar": "^1.1.11",
+    "@radix-ui/react-scroll-area": "^1.2.10",
+    "@radix-ui/react-slot": "^1.2.4",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "history": "^5.0.1",
+    "lucide-react": "^0.563.0",
     "nanoid": "^3.1.23",
+    "prism-react-renderer": "^2.4.1",
+    "prismjs": "^1.30.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-icons": "^4.2.0",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^6.30.3",
+    "react-shiki": "^0.9.1",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.4.0",
+    "tailwindcss-animate": "^1.0.7",
     "vite": "^5.4.21",
     "zustand": "^5.0.10"
   },
@@ -64,13 +77,13 @@
     "commands": [
       {
         "command": "NextWebview1.start",
-        "title": "Open Webview 1",
-        "category": "GitHub Next"
+        "title": "Open AI Chat",
+        "category": "Movesia"
       },
       {
         "command": "NextWebview2.start",
         "title": "Open Webview 2",
-        "category": "GitHub Next"
+        "category": "Movesia"
       }
     ]
   }

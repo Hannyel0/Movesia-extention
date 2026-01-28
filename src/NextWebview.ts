@@ -96,14 +96,13 @@ export class NextWebviewPanel extends NextWebview implements vscode.Disposable {
   private _disposables: vscode.Disposable[] = []
 
   // Singleton
-  public static getInstance(
-    opts: NextWebviewOptions & { column?: vscode.ViewColumn }
-  ): NextWebviewPanel {
+  public static async getInstance(
+    opts: NextWebviewOptions & { column?: vscode.ViewColumn; lockPanel?: boolean }
+  ): Promise<NextWebviewPanel> {
     const _opts = Object.assign(
       {
-        column: vscode.window.activeTextEditor
-          ? vscode.window.activeTextEditor.viewColumn
-          : undefined,
+        column: vscode.ViewColumn.Two,  // Default: RIGHT SIDE
+        lockPanel: true,                 // Default: LOCKED
       },
       opts
     )
@@ -118,18 +117,26 @@ export class NextWebviewPanel extends NextWebview implements vscode.Disposable {
       NextWebviewPanel.instances[_opts.viewId] = instance
     }
 
+    // Lock the editor group if requested
+    if (_opts.lockPanel) {
+      // Small delay to ensure panel is focused
+      setTimeout(async () => {
+        await vscode.commands.executeCommand('workbench.action.lockEditorGroup')
+      }, 100)
+    }
+
     return instance
   }
 
   private constructor(
-    opts: NextWebviewOptions & { column?: vscode.ViewColumn }
+    opts: NextWebviewOptions & { column?: vscode.ViewColumn; lockPanel?: boolean }
   ) {
     // Create the webview panel
     super(opts)
     this.panel = vscode.window.createWebviewPanel(
       opts.route,
       opts.title,
-      opts.column || vscode.ViewColumn.One,
+      opts.column || vscode.ViewColumn.Two,
       this.getWebviewOptions()
     )
     // Update the content

@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
-import View1 from './View1'
+import ChatView from './ChatView'
 import View2 from './View2'
 import './lib/vscode.css'
 import {
@@ -39,7 +39,7 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route path="view1" element={<View1 />} />
+      <Route path="chatView" element={<ChatView />} />
       <Route path="view2" element={<View2 />} />
     </Routes>
   )
