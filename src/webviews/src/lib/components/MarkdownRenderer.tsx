@@ -65,10 +65,7 @@ const CodeBlockHeader: FunctionComponent<{ language: string; code: string }> = (
   language,
   code,
 }) => (
-  <div
-    className="flex items-center justify-between px-4 py-2"
-    style={{ backgroundColor: 'rgba(255, 255, 255, 0.05)' }}
-  >
+  <div className="flex items-center justify-between px-4 py-2 bg-black/20 border-b border-vscode-widget-border/30">
     <span className="text-sm text-vscode-descriptionForeground">
       {language}
     </span>
@@ -104,10 +101,7 @@ export const MarkdownRenderer: FunctionComponent<MarkdownRendererProps> = ({
               const language = match ? match[1] : 'text'
 
               return (
-                <div
-                  className="code-block-wrapper my-4 rounded-lg overflow-hidden"
-                  style={{ backgroundColor: '#1a1a1a' }}
-                >
+                <div className="code-block-wrapper my-4 rounded-lg overflow-hidden border border-vscode-widget-border/30 bg-black/15">
                   <CodeBlockHeader language={language} code={codeString} />
                   <Highlight
                     theme={themes.vsDark}
@@ -121,7 +115,6 @@ export const MarkdownRenderer: FunctionComponent<MarkdownRendererProps> = ({
                           margin: 0,
                           padding: '16px',
                           fontSize: '14px',
-                          backgroundColor: 'transparent',
                           lineHeight: '1.6',
                           fontFamily: 'var(--vscode-editor-font-family, "Fira Code", "Cascadia Code", Consolas, monospace)',
                         }}
