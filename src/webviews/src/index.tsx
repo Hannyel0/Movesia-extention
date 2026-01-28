@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react'
-import ReactDOM from 'react-dom'
+import { createRoot } from 'react-dom/client'
 import View1 from './View1'
 import View2 from './View2'
 import './lib/vscode.css'
@@ -34,7 +34,7 @@ function AppRoutes() {
   let location = useLocation()
   let navigate = useNavigate()
   useEffect(() => {
-    navigate(`/${rootEl.dataset.route}`, { replace: true })
+    navigate(`/${rootEl!.dataset.route}`, { replace: true })
   }, [])
 
   return (
@@ -45,11 +45,11 @@ function AppRoutes() {
   )
 }
 
-ReactDOM.render(
+const reactRoot = createRoot(rootEl!)
+reactRoot.render(
   <React.StrictMode>
-    <Router initialEntries={[rootEl.dataset.route]} initialIndex={0}>
+    <Router initialEntries={[rootEl?.dataset.route ?? '/']} initialIndex={0}>
       <AppRoutes />
     </Router>
-  </React.StrictMode>,
-  rootEl
+  </React.StrictMode>
 )

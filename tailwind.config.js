@@ -1,12 +1,8 @@
-/** @type {import("@types/tailwindcss/tailwind-config").TailwindConfig } */
+/** @type {import('tailwindcss').Config} */
 module.exports = {
-  mode: 'jit',
-  purge: ['./src/webviews/**/*.{js,jsx,ts,tsx,css}'],
-  darkMode: false, // or 'media' or 'class'
+  content: ['./src/webviews/**/*.{js,jsx,ts,tsx,css}'],
+  darkMode: 'class',
   theme: {
-    extend: {},
-  },
-  variants: {
     extend: {},
   },
   plugins: [require('@githubocto/tailwind-vscode')],

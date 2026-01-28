@@ -21,7 +21,7 @@ abstract class NextWebview {
       {
         scriptUri: vscode.Uri.joinPath(
           options.extensionUri,
-          'out/webviews/index.es.js'
+          'out/webviews/index.mjs'
         ),
         styleUri: vscode.Uri.joinPath(
           options.extensionUri,

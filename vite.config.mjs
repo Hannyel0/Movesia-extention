@@ -1,12 +1,20 @@
 import { defineConfig } from 'vite'
-const path = require('path')
+import react from '@vitejs/plugin-react'
+import path from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 /**
  * @type {import('vite').UserConfig}
  */
 export default defineConfig({
-  // root: 'src/webviews',
+  plugins: [react()],
   publicDir: 'src/webviews/public',
+  define: {
+    'process.env.NODE_ENV': JSON.stringify('production'),
+    'process.env': JSON.stringify({}),
+  },
   build: {
     outDir: 'out/webviews',
     target: 'esnext',
@@ -17,6 +25,6 @@ export default defineConfig({
       formats: ['es'],
       fileName: 'index',
     },
-    watch: {}, // yes, this is correct
+    watch: {},
   },
 })

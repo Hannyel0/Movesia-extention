@@ -1,6 +1,6 @@
 import React, { FunctionComponent } from 'react'
 import { GoMarkGithub } from 'react-icons/go'
-import shallow from 'zustand/shallow'
+import { useShallow } from 'zustand/react/shallow'
 import useAppState from './appState'
 import Toggle from './lib/components/Toggle'
 
@@ -8,12 +8,10 @@ type View2Props = {}
 
 const View2: FunctionComponent<View2Props> = props => {
   const [toggle1, setToggle1] = useAppState(
-    state => [state.toggle1, state.setToggle1],
-    shallow
+    useShallow(state => [state.toggle1, state.setToggle1])
   )
   const [toggle2, setToggle2] = useAppState(
-    state => [state.toggle2, state.setToggle2],
-    shallow
+    useShallow(state => [state.toggle2, state.setToggle2])
   )
   return (
     <div>

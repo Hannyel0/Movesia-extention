@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid'
-import create, { State, StateCreator, UseStore } from 'zustand'
-import { persist, StateStorage } from 'zustand/middleware'
+import { create, StateCreator } from 'zustand'
+import { persist, createJSONStorage, PersistStorage } from 'zustand/middleware'
 import VSCodeAPI from '../VSCodeAPI'
 
 /**
@@ -10,28 +10,36 @@ import VSCodeAPI from '../VSCodeAPI'
  * @template TState
  * @param {string} name A globally-unique name for the store.
  * @param {StateCreator<TState>} createState A function which creates the initial state.
- * @return {*}  {UseStore<TState>}
+ * @return {*}  Zustand store hook
  */
-export default function createVSCodeZustand<TState extends State>(
+export default function createVSCodeZustand<TState>(
   name: string,
-  createState: StateCreator<TState>
-): UseStore<TState> {
-  return create(
+  createState: StateCreator<TState, [], []>
+) {
+  return create<TState>()(
     persist(createState, {
       name,
-      getStorage: () => VSCodeStateStorage,
+      storage: createJSONStorage(() => VSCodeStateStorage),
     })
   )
 }
 
-const VSCodeStateStorage: StateStorage = {
-  getItem: async (name: string): Promise<string | null> => {
-    return await VSCodeAPI.getState()[name]
+const VSCodeStateStorage: PersistStorage<unknown> = {
+  getItem: (name: string) => {
+    const state = VSCodeAPI.getState()
+    return state?.[name] ?? null
   },
-  setItem: async (name: string, value: string): Promise<void> => {
-    return VSCodeAPI.setState({
+  setItem: (name: string, value: unknown) => {
+    VSCodeAPI.setState({
       ...VSCodeAPI.getState(),
       [name]: value,
     })
+  },
+  removeItem: (name: string) => {
+    const state = VSCodeAPI.getState()
+    if (state) {
+      delete state[name]
+      VSCodeAPI.setState(state)
+    }
   },
 }

@@ -38,9 +38,9 @@ const View1: FunctionComponent<View1Props> = props => {
           setVal(newval)
           if (newval === '42') {
             setSuccess('That is the correct value!')
-            setErr(undefined)
+            setErr('')
           } else {
-            setSuccess(undefined)
+            setSuccess('')
             setErr('The only correct answer is 42')
           }
         }}
