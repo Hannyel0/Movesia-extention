@@ -46,10 +46,12 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@ai-sdk/react": "^3.0.59",
     "@hediet/node-reload": "^0.7.3",
     "@radix-ui/react-avatar": "^1.1.11",
     "@radix-ui/react-scroll-area": "^1.2.10",
     "@radix-ui/react-slot": "^1.2.4",
+    "ai": "^6.0.57",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "history": "^5.0.1",
@@ -67,6 +69,7 @@
     "tailwind-merge": "^3.4.0",
     "tailwindcss-animate": "^1.0.7",
     "vite": "^5.4.21",
+    "zod": "^4.3.6",
     "zustand": "^5.0.10"
   },
   "activationEvents": [

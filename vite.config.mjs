@@ -15,6 +15,12 @@ export default defineConfig({
     'process.env.NODE_ENV': JSON.stringify('production'),
     'process.env': JSON.stringify({}),
   },
+  resolve: {
+    alias: {
+      // Handle zod/v4 subpath export for AI SDK compatibility
+      'zod/v4': path.resolve(__dirname, 'node_modules/zod/v4/index.js'),
+    },
+  },
   build: {
     outDir: 'out/webviews',
     target: 'esnext',

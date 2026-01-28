@@ -47,7 +47,7 @@ from unity.unity_ws import router as unity_router, init_unity_routes
 from managers import InterruptManager, ChatManager
 
 # Chat routes
-from routes import chat_router
+from routes import chat_router, chat_sse_router
 from routes.chat_ws import init_chat_routes
 
 # Agent streaming
@@ -134,6 +134,7 @@ init_chat_routes(chat_manager, unity_manager, agent_streamer.stream_response)
 # Include routers
 app.include_router(unity_router)
 app.include_router(chat_router)
+app.include_router(chat_sse_router)  # Vercel AI SDK compatible SSE endpoint
 
 
 # =============================================================================

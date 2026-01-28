@@ -40,7 +40,7 @@ def internet_search(
     return tavily_client.search(query, max_results=max_results, topic=topic)
 
 model = ChatOpenAI(
-    model="x-ai/grok-code-fast-1",
+    model="anthropic/claude-haiku-4.5",
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY"),
 )

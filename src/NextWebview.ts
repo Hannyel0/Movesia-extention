@@ -68,7 +68,7 @@ abstract class NextWebview {
 				Use a content security policy to only allow loading images from https or from our extension directory,
 				and only allow scripts that have a specific nonce.
         -->
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} 'self' data:; style-src ${webview.cspSource}; script-src 'nonce-${this._opts.nonce}';">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} 'self' data:; style-src ${webview.cspSource}; script-src 'nonce-${this._opts.nonce}'; connect-src http://127.0.0.1:8765;">
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
         
