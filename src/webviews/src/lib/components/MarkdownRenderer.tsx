@@ -122,6 +122,12 @@ export const MarkdownRenderer: FunctionComponent<MarkdownRendererProps> = ({
                         <code>
                           {tokens.map((line, i) => (
                             <div key={i} {...getLineProps({ line })}>
+                              <span
+                                className="inline-block text-right mr-4 select-none opacity-40 text-vscode-editorLineNumber-foreground"
+                                style={{ width: `${String(tokens.length).length + 0.5}em` }}
+                              >
+                                {i + 1}
+                              </span>
                               {line.map((token, key) => (
                                 <span key={key} {...getTokenProps({ token })} />
                               ))}

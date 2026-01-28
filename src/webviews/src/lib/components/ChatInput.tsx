@@ -33,7 +33,7 @@ export function ChatInput({
 
   return (
     <div className="p-4">
-      <div className="max-w-3xl mx-auto">
+      <div>
         <div className="relative flex flex-col rounded-2xl bg-vscode-input-background border border-vscode-input-border overflow-hidden">
           {/* Input Row */}
           <div className="flex items-center px-4 py-3">
