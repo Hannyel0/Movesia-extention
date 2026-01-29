@@ -140,18 +140,30 @@ async def get_messages(session_id: str):
 @router.delete("/conversations/{session_id}")
 async def delete_conversation(session_id: str):
     """
-    Delete a conversation metadata entry.
-
-    Note: This only deletes our metadata. LangGraph checkpoints
-    would need separate cleanup if desired.
+    Delete a conversation and its LangGraph checkpoints.
     """
     repo = get_repository()
 
+    # Verify conversation exists
+    conversation = await repo.get(session_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Delete LangGraph checkpoints for this thread
+    try:
+        checkpointer = get_checkpoint_saver()
+        await checkpointer.adelete_thread(session_id)
+        logger.info(f"Deleted checkpoints for thread: {session_id}")
+    except Exception as e:
+        logger.warning(f"Failed to delete checkpoints: {e}")
+        # Continue anyway - we still want to delete the metadata
+
+    # Delete our conversation metadata
     deleted = await repo.delete(session_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    return {"status": "ok", "message": "Conversation deleted"}
+    return {"status": "ok", "message": "Conversation and messages deleted"}
 
 
 # =============================================================================

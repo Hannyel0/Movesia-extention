@@ -400,15 +400,34 @@ function ChatView() {
     // TODO: Create new thread
   }, [setMessages])
 
-  const handleDeleteThread = useCallback((id: string) => {
-    log('Thread', `Deleting thread: ${id}`)
-    setThreads(prev => prev.filter(t => t.id !== id))
-    if (threadId === id) {
-      setThreadId(null)
-      setMessages([])
-    }
-    // TODO: Delete thread from backend
-  }, [threadId, setMessages])
+  const handleDeleteThread = useCallback(
+    async (id: string) => {
+      log('Thread', `Deleting thread: ${id}`)
+
+      // Delete from backend
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/conversations/${id}`, {
+          method: 'DELETE',
+        })
+
+        if (!response.ok) {
+          log('Thread', `Failed to delete thread from backend: ${response.status}`)
+        } else {
+          log('Thread', `Thread deleted from backend: ${id}`)
+        }
+      } catch (err) {
+        log('Thread', 'Error deleting thread from backend', err)
+      }
+
+      // Update local state
+      setThreads(prev => prev.filter(t => t.id !== id))
+      if (threadId === id) {
+        setThreadId(null)
+        setMessages([])
+      }
+    },
+    [threadId, setMessages]
+  )
 
   const handleStop = useCallback(() => {
     log('Stop', 'Stopping generation')
