@@ -38,13 +38,11 @@ class ChatManager:
                 session_id=session_id,
                 websocket=websocket
             )
-            logger.info(f"Chat session started: {session_id}")
 
     async def unregister(self, session_id: str):
         """Unregister a chat session."""
         async with self._lock:
             self._sessions.pop(session_id, None)
-            logger.info(f"Chat session ended: {session_id}")
 
     async def send(self, session_id: str, message: dict):
         """Send message to a specific session."""

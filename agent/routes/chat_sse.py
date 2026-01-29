@@ -32,6 +32,14 @@ def init_chat_sse_routes(graph):
 # Setup logger for chat SSE
 logger = logging.getLogger("movesia.chat")
 
+# =============================================================================
+# Debug helper for tool call rendering issues
+# =============================================================================
+def log_sse_event(event_type: str, data: dict, extra_info: str = ""):
+    """Log SSE events being sent to frontend for debugging tool rendering."""
+    compact = json.dumps(data, default=str)[:300]
+    logger.info(f"[SSE→UI] {event_type}: {compact} {extra_info}")
+
 
 class UIMessageStreamProtocol:
     """
@@ -51,23 +59,19 @@ class UIMessageStreamProtocol:
         self.message_id = f"msg_{uuid.uuid4().hex}"
         self.text_id = f"text_{uuid.uuid4().hex}"
         self.text_started = False
-        logger.debug(f"[Protocol] Created new protocol instance: message_id={self.message_id}")
 
     def _sse(self, data: dict) -> str:
         """Format as SSE data line."""
         result = f"data: {json.dumps(data)}\n\n"
-        logger.debug(f"[Protocol] SSE event: {data.get('type', 'unknown')}")
         return result
 
     def start(self) -> str:
         """Start a new assistant message."""
-        logger.info(f"[Protocol] Starting message: {self.message_id}")
         return self._sse({"type": "start", "messageId": self.message_id})
 
     def text_start(self) -> str:
         """Start text content block."""
         self.text_started = True
-        logger.debug(f"[Protocol] Text block started: {self.text_id}")
         return self._sse({"type": "text-start", "id": self.text_id})
 
     def text_delta(self, content: str) -> str:
@@ -79,20 +83,19 @@ class UIMessageStreamProtocol:
     def text_end(self) -> str:
         """End text content block."""
         if not self.text_started:
-            logger.warning("[Protocol] text_end called but text was not started")
             return ""
         self.text_started = False
-        logger.debug(f"[Protocol] Text block ended: {self.text_id}")
         return self._sse({"type": "text-end", "id": self.text_id})
 
     def tool_input_start(self, tool_call_id: str, tool_name: str) -> str:
         """Start tool input streaming."""
-        logger.info(f"[Protocol] Tool input start: {tool_name} (id={tool_call_id})")
-        return self._sse({
+        data = {
             "type": "tool-input-start",
             "toolCallId": tool_call_id,
             "toolName": tool_name
-        })
+        }
+        log_sse_event("TOOL_INPUT_START", data)
+        return self._sse(data)
 
     def tool_input_delta(self, tool_call_id: str, delta: str) -> str:
         """Stream tool input delta."""
@@ -104,41 +107,42 @@ class UIMessageStreamProtocol:
 
     def tool_input_available(self, tool_call_id: str, tool_name: str, input_data: Any) -> str:
         """Tool input is fully available."""
-        logger.debug(f"[Protocol] Tool input available: {tool_name}")
-        return self._sse({
+        data = {
             "type": "tool-input-available",
             "toolCallId": tool_call_id,
             "toolName": tool_name,
             "input": input_data
-        })
+        }
+        log_sse_event("TOOL_INPUT_AVAILABLE", data)
+        return self._sse(data)
 
     def tool_output_available(self, tool_call_id: str, output: Any) -> str:
         """Tool output is available."""
-        logger.debug(f"[Protocol] Tool output available: {tool_call_id}")
-        return self._sse({
+        data = {
             "type": "tool-output-available",
             "toolCallId": tool_call_id,
             "output": output
-        })
+        }
+        log_sse_event("TOOL_OUTPUT_AVAILABLE", data)
+        return self._sse(data)
 
     def finish_step(self) -> str:
         """Finish a step (after tool calls, before continuing)."""
-        logger.debug("[Protocol] Step finished")
-        return self._sse({"type": "finish-step"})
+        data = {"type": "finish-step"}
+        log_sse_event("FINISH_STEP", data, "(tool execution complete)")
+        return self._sse(data)
 
     def finish(self) -> str:
         """Finish the message."""
-        logger.info(f"[Protocol] Message finished: {self.message_id}")
         return self._sse({"type": "finish"})
 
     def error(self, message: str) -> str:
         """Report an error."""
-        logger.error(f"[Protocol] Error: {message}")
+        logger.error(f"[SSE] Error: {message}")
         return self._sse({"type": "error", "errorText": message})
 
     def done(self) -> str:
         """Signal end of stream."""
-        logger.debug("[Protocol] Stream done")
         return "data: [DONE]\n\n"
 
 
@@ -171,27 +175,17 @@ async def stream_agent_sse(
     # Track state
     has_text_content = False
     current_tool_calls = {}  # track tool_call_id -> tool_name
-    token_count = 0
-    event_count = 0
+    tool_call_count = 0
     start_time = datetime.now()
 
-    logger.info(f"[Stream] Starting agent stream for thread={thread_id}")
-    logger.debug(f"[Stream] Input data: {input_data}")
+    logger.info(f"[Stream] Starting for thread={thread_id[:16]}...")
 
     try:
         # Start the message
-        logger.info(f"[Stream] User message: \"{user_message[:100]}{'...' if len(user_message) > 100 else ''}\"")
         yield protocol.start()
 
-        logger.debug("[Stream] Beginning astream_events iteration...")
-
         async for event in _graph.astream_events(input_data, config=config, version="v2"):
-            event_count += 1
             kind = event.get("event")
-
-            # Log every 10th event to avoid spam, but always log important events
-            if event_count <= 5 or event_count % 10 == 0 or kind in ["on_tool_start", "on_tool_end"]:
-                logger.debug(f"[Stream] Event #{event_count}: {kind}")
 
             if kind == "on_chat_model_stream":
                 chunk = event.get("data", {}).get("chunk")
@@ -201,10 +195,8 @@ async def stream_agent_sse(
                     if isinstance(content, str) and content:
                         # Start text block if not already started
                         if not has_text_content:
-                            logger.debug("[Stream] Starting text content block")
                             yield protocol.text_start()
                             has_text_content = True
-                        token_count += 1
                         yield protocol.text_delta(content)
                     elif isinstance(content, list):
                         for block in content:
@@ -216,30 +208,28 @@ async def stream_agent_sse(
 
                             if text:
                                 if not has_text_content:
-                                    logger.debug("[Stream] Starting text content block (from list)")
                                     yield protocol.text_start()
                                     has_text_content = True
-                                token_count += 1
                                 yield protocol.text_delta(text)
 
             elif kind == "on_tool_start":
                 # End any ongoing text block before tool call
                 if has_text_content:
-                    logger.debug("[Stream] Ending text block before tool call")
                     yield protocol.text_end()
                     has_text_content = False
 
                 tool_name = event.get("name", "unknown")
                 tool_input = event.get("data", {}).get("input", {})
                 tool_call_id = event.get("run_id", str(uuid.uuid4()))
+                tool_call_count += 1
 
-                logger.info(f"[Stream] Tool call started: {tool_name} (id={tool_call_id})")
-                logger.debug(f"[Stream] Tool input: {str(tool_input)[:200]}")
+                logger.info(f"[TOOL #{tool_call_count}] START: {tool_name} | id={tool_call_id[:12]}...")
+                logger.info(f"[TOOL #{tool_call_count}] INPUT: {json.dumps(safe_serialize(tool_input), default=str)[:200]}")
 
                 # Track the tool call
                 current_tool_calls[tool_call_id] = tool_name
 
-                # Stream tool input
+                # Stream tool input - these are the SSE events the frontend needs to render
                 yield protocol.tool_input_start(tool_call_id, tool_name)
                 serialized_input = safe_serialize(tool_input)
                 yield protocol.tool_input_delta(tool_call_id, json.dumps(serialized_input))
@@ -250,8 +240,8 @@ async def stream_agent_sse(
                 tool_output = event.get("data", {}).get("output")
                 tool_name = current_tool_calls.get(tool_call_id, "unknown")
 
-                logger.info(f"[Stream] Tool call completed: {tool_name} (id={tool_call_id})")
-                logger.debug(f"[Stream] Tool output: {str(tool_output)[:200]}")
+                logger.info(f"[TOOL] END: {tool_name} | id={tool_call_id[:12]}...")
+                logger.info(f"[TOOL] OUTPUT: {str(tool_output)[:150]}...")
 
                 # Send tool result
                 truncated_output = truncate_output(tool_output, max_length=2000)
@@ -265,12 +255,11 @@ async def stream_agent_sse(
 
         # End any remaining text block
         if has_text_content:
-            logger.debug("[Stream] Ending remaining text block")
             yield protocol.text_end()
 
         # Calculate duration
         duration = (datetime.now() - start_time).total_seconds()
-        logger.info(f"[Stream] Completed successfully: {token_count} tokens, {event_count} events in {duration:.2f}s")
+        logger.info(f"[Stream] Complete: {tool_call_count} tools in {duration:.2f}s")
 
         # Finish the message
         yield protocol.finish()
@@ -293,13 +282,8 @@ async def chat_sse(request: Request):
     SSE endpoint compatible with Vercel AI SDK v5 / assistant-ui.
     Uses UI Message Stream Protocol v1.
     """
-    logger.info("=" * 60)
-    logger.info("[API] POST /api/chat - Request received")
-
     try:
         body = await request.json()
-        logger.debug(f"[API] Request body keys: {list(body.keys())}")
-        logger.debug(f"[API] Request headers: {dict(request.headers)}")
     except Exception as e:
         logger.error(f"[API] Failed to parse request body: {e}")
         protocol = UIMessageStreamProtocol()
@@ -318,10 +302,8 @@ async def chat_sse(request: Request):
 
     # AI SDK sends messages array
     messages = body.get("messages", [])
-    logger.info(f"[API] Received {len(messages)} messages")
 
     if not messages:
-        logger.warning("[API] No messages in request body")
         protocol = UIMessageStreamProtocol()
         async def error_stream():
             yield protocol.error("No messages provided")
@@ -338,7 +320,6 @@ async def chat_sse(request: Request):
 
     # Get the last user message
     last_message = messages[-1]
-    logger.debug(f"[API] Last message: {json.dumps(last_message, default=str)[:500]}")
 
     # Extract text - handle BOTH formats:
     # 1. Standard AI SDK: { "content": "text" } or { "content": [{ "type": "text", "text": "..." }] }
@@ -349,7 +330,6 @@ async def chat_sse(request: Request):
     # Try "content" first (standard AI SDK format)
     user_content = last_message.get("content")
     if user_content:
-        logger.debug(f"[API] Found 'content' field, type: {type(user_content).__name__}")
         if isinstance(user_content, str):
             user_text = user_content
         elif isinstance(user_content, list):
@@ -363,7 +343,6 @@ async def chat_sse(request: Request):
     if not user_text:
         parts = last_message.get("parts", [])
         if parts:
-            logger.debug(f"[API] Found 'parts' field with {len(parts)} parts")
             user_text = " ".join(
                 part.get("text", "")
                 for part in parts
@@ -373,14 +352,9 @@ async def chat_sse(request: Request):
     # Final fallback - check for direct text field
     if not user_text:
         user_text = last_message.get("text", "")
-        if user_text:
-            logger.debug("[API] Found 'text' field")
-
-    logger.info(f"[API] Extracted user text: \"{user_text[:100]}{'...' if len(user_text) > 100 else ''}\"")
 
     if not user_text.strip():
-        logger.warning("[API] Empty message content after extraction")
-        logger.warning(f"[API] Last message structure: {json.dumps(last_message, default=str)}")
+        logger.warning("[API] Empty message content")
         protocol = UIMessageStreamProtocol()
         async def error_stream():
             yield protocol.error("Empty message")
@@ -414,18 +388,13 @@ async def chat_sse(request: Request):
     # ==========================================================================
 
     thread_id = body.get("threadId") or request.headers.get("x-thread-id")
-    logger.debug(f"[API] Thread ID from request: {thread_id}")
 
     # If no thread ID provided, generate one (new conversation)
     if not thread_id or thread_id == "default":
         thread_id = f"thread_{uuid.uuid4().hex}"
-        logger.info(f"[API] Generated new thread ID: {thread_id}")
-    else:
-        logger.info(f"[API] Using existing thread ID: {thread_id}")
 
     protocol = UIMessageStreamProtocol()
 
-    logger.info(f"[API] Starting SSE stream response...")
     return StreamingResponse(
         stream_agent_sse(user_text, thread_id, protocol),
         media_type="text/event-stream",

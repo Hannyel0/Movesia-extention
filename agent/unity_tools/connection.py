@@ -21,7 +21,6 @@ def set_unity_manager(manager) -> None:
     """
     global _unity_manager
     _unity_manager = manager
-    logger.info("Unity manager registered with tools")
 
 
 def get_unity_manager():
@@ -53,11 +52,8 @@ async def call_unity_async(action: str, **params) -> dict:
             "hint": "Check that the Movesia plugin is installed in Unity and the WebSocket connection is established."
         }
 
-    logger.debug(f"call_unity_async: action={action}, params={json.dumps(params)}")
-
     try:
         result = await _unity_manager.send_and_wait(action, **params)
-        logger.debug(f"call_unity_async result: {str(result)[:200]}")
         return result
     except TimeoutError as e:
         logger.warning(f"Unity command timed out: {action}")

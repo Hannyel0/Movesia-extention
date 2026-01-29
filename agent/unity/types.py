@@ -51,10 +51,7 @@ class MovesiaMessage:
     ) -> "MovesiaMessage":
         """Factory method to create a new message with auto-generated ID and timestamp."""
         import uuid
-        import logging
-        logger = logging.getLogger("movesia.types")
         msg_id = str(uuid.uuid4())
-        logger.info(f"🆕 MovesiaMessage.create(): type={msg_type}, id={msg_id}")
         return cls(
             source=source,
             type=msg_type,

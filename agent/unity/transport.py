@@ -49,7 +49,6 @@ async def send_to_client(
             )
             envelope = msg.to_dict()
 
-        logger.info(f"📡 send_to_client: type={envelope.get('type')}, id={envelope.get('id')}")
         await ws.send_json(envelope)
         return True
         

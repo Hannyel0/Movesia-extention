@@ -76,7 +76,6 @@ class HeartbeatManager:
         
         self._running = True
         self._task = asyncio.create_task(self._heartbeat_loop())
-        logger.info(f"Heartbeat monitoring active")
     
     def stop(self) -> None:
         """Stop the heartbeat background task."""
@@ -84,7 +83,6 @@ class HeartbeatManager:
         if self._task and not self._task.done():
             self._task.cancel()
             self._task = None
-        logger.info("Heartbeat stopped")
     
     def suspend(self, duration_ms: int) -> None:
         """
@@ -100,7 +98,6 @@ class HeartbeatManager:
         # Only extend, never shorten
         if suspend_until > self._suspend_until:
             self._suspend_until = suspend_until
-            logger.info(f"Heartbeat suspended for {duration_ms}ms")
     
     def is_suspended(self) -> bool:
         """Check if heartbeat is currently suspended."""
@@ -117,7 +114,6 @@ class HeartbeatManager:
         ping_time = self._pending_pings.pop(cid, None)
         if ping_time:
             connection.mark_pong_received(ping_time)
-            logger.debug(f"Pong received from [{cid}], latency={connection.latency_ms:.1f}ms")
         else:
             # Unsolicited pong (unidirectional heartbeat from client)
             connection.update_seen()
@@ -135,8 +131,6 @@ class HeartbeatManager:
                 
                 # Skip sweep if suspended
                 if self.is_suspended():
-                    remaining = self._suspend_until - self._now()
-                    logger.debug(f"Heartbeat suspended, {remaining:.1f}s remaining")
                     continue
                 
                 await self._sweep_connections()
@@ -187,7 +181,6 @@ class HeartbeatManager:
             if conn.closing_since:
                 closing_duration = now - conn.closing_since
                 if closing_duration > (self.config.closing_force_kill_ms / 1000):
-                    logger.warning(f"Force-killing stuck connection [{conn.cid}]")
                     await self._terminate(ws, conn.cid)
             return
         
@@ -200,7 +193,6 @@ class HeartbeatManager:
         
         # Check max idle - disconnect if too long
         if idle_ms > self.config.max_idle_ms:
-            logger.warning(f"Connection [{conn.cid}] exceeded max idle time, terminating")
             await self._close(ws, conn.cid, 1001, "idle timeout")
             return
         
@@ -215,13 +207,8 @@ class HeartbeatManager:
             conn.missed_pongs += 1
             
             if conn.missed_pongs >= self.config.max_missed_pongs:
-                logger.warning(
-                    f"Connection [{conn.cid}] missed {conn.missed_pongs} pongs, terminating"
-                )
                 await self._terminate(ws, conn.cid)
                 return
-            
-            logger.debug(f"Connection [{conn.cid}] missed pong ({conn.missed_pongs})")
         
         # Send ping
         conn.is_alive = False
@@ -235,7 +222,6 @@ class HeartbeatManager:
         try:
             self._pending_pings[cid] = now
             await self._send_ping(ws, cid)
-            logger.debug(f"Ping sent to [{cid}]")
         except Exception as e:
             logger.error(f"Failed to send ping to [{cid}]: {e}")
             self._pending_pings.pop(cid, None)
@@ -247,7 +233,6 @@ class HeartbeatManager:
         
         try:
             await self._close_connection(ws, code, reason)
-            logger.debug(f"Closed connection [{cid}] with code={code}")
         except Exception as e:
             logger.error(f"Failed to close [{cid}]: {e}")
     

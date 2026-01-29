@@ -28,13 +28,11 @@ class InterruptManager:
         """Create a future that will be resolved when Unity responds."""
         async with self._lock:
             if request_id in self._pending:
-                logger.warning(f"Interrupt {request_id} already exists, replacing")
                 self._pending[request_id].cancel()
 
             loop = asyncio.get_event_loop()
             future = loop.create_future()
             self._pending[request_id] = future
-            logger.info(f"Created interrupt: {request_id}")
             return future
 
     async def resolve(self, request_id: str, result: dict):
@@ -44,9 +42,6 @@ class InterruptManager:
                 future = self._pending.pop(request_id)
                 if not future.done():
                     future.set_result(result)
-                    logger.info(f"Resolved interrupt: {request_id}")
-            else:
-                logger.warning(f"No pending interrupt for: {request_id}")
 
     async def wait(self, request_id: str, timeout: float = INTERRUPT_TIMEOUT) -> dict:
         """Wait for an interrupt to be resolved."""

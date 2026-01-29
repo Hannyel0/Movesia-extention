@@ -352,13 +352,6 @@ class UnityManager:
             # Receive message
             data = await websocket.receive_text()
 
-            # Log raw data to see exactly what Unity sent
-            import json
-            try:
-                raw_parsed = json.loads(data)
-                logger.info(f"📥 RAW from Unity: type={raw_parsed.get('type')}, id={raw_parsed.get('id')}")
-            except:
-                logger.info(f"📥 RAW from Unity (unparseable): {data[:200]}")
 
             # Route through message router
             msg = await self._router.handle_message(websocket, connection, data)
@@ -368,14 +361,10 @@ class UnityManager:
 
             # Check if this is a response to a pending command (matched by message ID)
             # Unity echoes back the original message ID in its response
-            logger.info(f"Checking msg.id={msg.id} against pending_commands: {list(self._pending_commands.keys())}")
             if msg.id in self._pending_commands:
                 future = self._pending_commands.get(msg.id)
                 if future and not future.done():
                     future.set_result(msg.body)
-                    logger.info(f"✅ Resolved response for [msg.id={msg.id}]")
-            else:
-                logger.info(f"❌ No match for msg.id={msg.id}")
     
     async def _cleanup_connection(
         self,

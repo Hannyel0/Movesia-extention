@@ -35,8 +35,6 @@ class AgentStreamer:
         """
         input_data = {"messages": [("human", user_message)]}
 
-        logger.info("Agent processing started")
-
         # Notify client we're starting
         await websocket.send_json({
             "type": "start",
@@ -73,7 +71,6 @@ class AgentStreamer:
 
         # Signal completion
         await websocket.send_json({"type": "complete"})
-        logger.info("Agent processing complete")
 
     async def _handle_stream_event(self, websocket: WebSocket, event: dict):
         """Handle individual stream events from the agent."""
@@ -109,8 +106,6 @@ class AgentStreamer:
                 "input": safe_serialize(tool_input)
             })
 
-            logger.info(f"🔧 Tool: {tool_name}")
-
         elif kind == "on_tool_end":
             # Tool finished
             tool_name = event.get("name", "unknown")
@@ -121,8 +116,6 @@ class AgentStreamer:
                 "name": tool_name,
                 "output": truncate_output(tool_output)
             })
-
-            logger.info(f"✓ Tool done: {tool_name}")
 
         elif kind == "on_tool_error":
             # Tool errored
@@ -154,8 +147,6 @@ class AgentStreamer:
 
         interrupt_type = interrupt_data.get("type", "unknown")
         request_id = interrupt_data.get("request_id")
-
-        logger.info(f"⏸ Interrupt: {interrupt_type}")
 
         # Notify client we're waiting
         await websocket.send_json({

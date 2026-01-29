@@ -35,7 +35,6 @@ async def chat_websocket_endpoint(websocket: WebSocket, session_id: str):
     await _chat_manager.register(session_id, websocket)
 
     short_id = session_id[:8]
-    logger.info(f"Chat connected [{short_id}]")
 
     # Create/update conversation metadata in database
     repo = get_repository()
@@ -65,8 +64,6 @@ async def chat_websocket_endpoint(websocket: WebSocket, session_id: str):
             if msg_type == "message":
                 # User sent a chat message - run the agent
                 user_message = data.get("content", "")
-                preview = user_message[:50] + "..." if len(user_message) > 50 else user_message
-                logger.info(f"Message [{short_id}]: {preview}")
 
                 # Set conversation title from first user message
                 if is_first_message:
@@ -90,7 +87,7 @@ async def chat_websocket_endpoint(websocket: WebSocket, session_id: str):
                 await websocket.send_json({"type": "pong"})
 
     except WebSocketDisconnect:
-        logger.info(f"Chat disconnected [{short_id}]")
+        pass
     except Exception as e:
         logger.error(f"Chat error [{short_id}]: {e}")
         try:

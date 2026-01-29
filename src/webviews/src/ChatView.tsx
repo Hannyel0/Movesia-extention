@@ -7,6 +7,7 @@ import { cn } from './lib/utils'
 import { MarkdownRenderer } from './lib/components/MarkdownRenderer'
 import { ChatInput } from './lib/components/ChatInput'
 import { ThreadSelector, type Thread } from './lib/components/ThreadSelector'
+import { ToolCallList, type ToolCallData, type ToolCallState } from './lib/components/ToolCall'
 
 // Configuration - update this to match your agent server
 const API_BASE_URL = 'http://127.0.0.1:8765'
@@ -29,12 +30,14 @@ interface DisplayMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
-  toolCalls?: Array<{
-    id: string
-    name: string
-    input: unknown
-    output?: unknown
-  }>
+  toolCalls?: ToolCallData[]
+}
+
+// Tool call tracker - stores tool calls for the current streaming session
+// We track by backend message ID, and associate with the latest assistant message
+interface StreamingToolCalls {
+  backendMessageId: string
+  tools: Map<string, ToolCallData>
 }
 
 // Helper function to extract text content from UIMessage parts
@@ -46,14 +49,31 @@ function getMessageTextContent(msg: UIMessage): string {
     .join('')
 }
 
+// Tool call event types from SSE
+interface ToolCallEvent {
+  type: 'tool-start' | 'tool-input' | 'tool-output' | 'tool-error'
+  toolCallId: string
+  toolName?: string
+  input?: unknown
+  output?: unknown
+  error?: string
+}
+
+type ToolCallEventCallback = (event: ToolCallEvent, messageId: string) => void
+
 // Parse SSE stream and convert to UIMessageChunk stream
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function createUIMessageChunkStream(response: Response): ReadableStream<any> {
+// Also extracts tool call events and forwards them to the callback
+function createUIMessageChunkStream(
+  response: Response,
+  onToolCallEvent?: ToolCallEventCallback
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): ReadableStream<any> {
   log('SSE', 'Creating UIMessageChunk stream from response')
   const reader = response.body!.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   let chunkCount = 0
+  let currentMessageId = ''
 
   return new ReadableStream({
     async pull(controller) {
@@ -82,10 +102,48 @@ function createUIMessageChunkStream(response: Response): ReadableStream<any> {
             try {
               const chunk = JSON.parse(data)
               chunkCount++
+
               // Log first few chunks and then every 10th
               if (chunkCount <= 3 || chunkCount % 10 === 0) {
                 log('SSE', `Chunk #${chunkCount}: type=${chunk.type}`, chunk)
               }
+
+              // Track message ID from start event
+              if (chunk.type === 'start' && chunk.messageId) {
+                currentMessageId = chunk.messageId
+                log('SSE', `Message started: ${currentMessageId}`)
+              }
+
+              // Extract tool call events and forward to callback
+              if (onToolCallEvent && currentMessageId) {
+                if (chunk.type === 'tool-input-start') {
+                  log('ToolTrack', `Tool start: ${chunk.toolName}`, chunk)
+                  onToolCallEvent({
+                    type: 'tool-start',
+                    toolCallId: chunk.toolCallId,
+                    toolName: chunk.toolName,
+                  }, currentMessageId)
+                } else if (chunk.type === 'tool-input-available') {
+                  log('ToolTrack', `Tool input available: ${chunk.toolName}`, chunk)
+                  onToolCallEvent({
+                    type: 'tool-input',
+                    toolCallId: chunk.toolCallId,
+                    toolName: chunk.toolName,
+                    input: chunk.input,
+                  }, currentMessageId)
+                } else if (chunk.type === 'tool-output-available') {
+                  log('ToolTrack', `Tool output available`, chunk)
+                  onToolCallEvent({
+                    type: 'tool-output',
+                    toolCallId: chunk.toolCallId,
+                    output: chunk.output,
+                  }, currentMessageId)
+                } else if (chunk.type === 'error') {
+                  log('ToolTrack', `Error`, chunk)
+                  // Note: errors might not have toolCallId
+                }
+              }
+
               controller.enqueue(chunk)
             } catch (parseErr) {
               log('SSE', `Failed to parse JSON: "${data.slice(0, 100)}"`, parseErr)
@@ -108,6 +166,10 @@ function ChatView() {
   const [inputValue, setInputValue] = useState('')
   const [threadId, setThreadId] = useState<string | null>(null)
   const [threads, setThreads] = useState<Thread[]>([])
+  // Track tool calls for current streaming response
+  const [currentStreamTools, setCurrentStreamTools] = useState<StreamingToolCalls | null>(null)
+  // Track completed tool calls by the index of the assistant message (0-indexed among assistant messages only)
+  const [completedToolCalls, setCompletedToolCalls] = useState<Map<number, ToolCallData[]>>(new Map())
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Ref to always have access to current threadId in transport closure
@@ -115,6 +177,68 @@ function ChatView() {
   threadIdRef.current = threadId // Keep ref in sync with state
 
   log('Component', 'ChatView render', { threadId, inputValue: inputValue.slice(0, 20) })
+
+  // Handle tool call events from SSE stream
+  const handleToolCallEvent = useCallback((event: ToolCallEvent, messageId: string) => {
+    log('ToolEvent', `Received: ${event.type} for message ${messageId}`, event)
+
+    setCurrentStreamTools(prev => {
+      // Initialize if needed or if message ID changed
+      const isNewMessage = !prev || prev.backendMessageId !== messageId
+      const tools = isNewMessage ? new Map() : new Map(prev.tools)
+
+      const existingTool = tools.get(event.toolCallId)
+
+      switch (event.type) {
+        case 'tool-start':
+          tools.set(event.toolCallId, {
+            id: event.toolCallId,
+            name: event.toolName || 'unknown',
+            state: 'streaming' as ToolCallState,
+          })
+          break
+
+        case 'tool-input':
+          tools.set(event.toolCallId, {
+            id: event.toolCallId,
+            name: event.toolName || existingTool?.name || 'unknown',
+            state: 'executing' as ToolCallState,
+            input: event.input,
+          })
+          break
+
+        case 'tool-output':
+          if (existingTool) {
+            tools.set(event.toolCallId, {
+              ...existingTool,
+              state: 'completed' as ToolCallState,
+              output: event.output,
+            })
+          } else {
+            // Tool output without prior start/input (shouldn't happen but handle gracefully)
+            tools.set(event.toolCallId, {
+              id: event.toolCallId,
+              name: 'unknown',
+              state: 'completed' as ToolCallState,
+              output: event.output,
+            })
+          }
+          break
+
+        case 'tool-error':
+          if (existingTool) {
+            tools.set(event.toolCallId, {
+              ...existingTool,
+              state: 'error' as ToolCallState,
+              error: event.error,
+            })
+          }
+          break
+      }
+
+      return { backendMessageId: messageId, tools }
+    })
+  }, [])
 
   // Fetch conversation details from backend and add to threads list
   const fetchConversationDetails = useCallback(async (id: string) => {
@@ -231,7 +355,8 @@ function ChatView() {
 
           log('Transport', 'Creating SSE stream...')
           // Parse SSE and return UIMessageChunk stream
-          return createUIMessageChunkStream(response)
+          // Pass tool call event handler to extract tool calls from stream
+          return createUIMessageChunkStream(response, handleToolCallEvent)
         } catch (err) {
           log('Transport', 'Fetch error', err)
           throw err
@@ -241,10 +366,34 @@ function ChatView() {
     } as any,
   })
 
-  // Log status changes
+  // Log status changes and save tool calls when streaming ends
+  const prevStatusRef = useRef(status)
   useEffect(() => {
     log('Status', `Status changed to: ${status}`)
-  }, [status])
+
+    // When transitioning from streaming to ready, save tool calls
+    if (prevStatusRef.current === 'streaming' && status === 'ready') {
+      if (currentStreamTools && currentStreamTools.tools.size > 0) {
+        // Count assistant messages to get the index
+        const assistantCount = messages.filter(m => m.role === 'assistant').length
+        if (assistantCount > 0) {
+          const assistantIndex = assistantCount - 1
+          const toolsArray = Array.from(currentStreamTools.tools.values())
+          log('Status', `Saving ${toolsArray.length} tool calls for assistant ${assistantIndex}`)
+
+          setCompletedToolCalls(prev => {
+            const newMap = new Map(prev)
+            newMap.set(assistantIndex, toolsArray)
+            return newMap
+          })
+        }
+        // Clear current stream tools
+        setCurrentStreamTools(null)
+      }
+    }
+
+    prevStatusRef.current = status
+  }, [status, currentStreamTools, messages])
 
   // Log threads changes
   useEffect(() => {
@@ -354,6 +503,8 @@ function ChatView() {
     log('Clear', 'Clearing chat')
     setMessages([])
     setThreadId(null)
+    setCurrentStreamTools(null)
+    setCompletedToolCalls(new Map())
   }, [setMessages])
 
   // Thread handlers
@@ -361,6 +512,9 @@ function ChatView() {
     async (id: string) => {
       log('Thread', `Selected thread: ${id}`)
       setThreadId(id)
+      // Clear tool call tracking when switching threads
+      setCurrentStreamTools(null)
+      setCompletedToolCalls(new Map())
 
       // Load messages for this thread from backend
       try {
@@ -397,7 +551,8 @@ function ChatView() {
     log('Thread', 'Creating new thread')
     setThreadId(null)
     setMessages([])
-    // TODO: Create new thread
+    setCurrentStreamTools(null)
+    setCompletedToolCalls(new Map())
   }, [setMessages])
 
   const handleDeleteThread = useCallback(
@@ -435,29 +590,37 @@ function ChatView() {
   }, [stop])
 
   // Convert AI SDK v6 UIMessage to display format
-  const displayMessages: DisplayMessage[] = messages.map(msg => {
+  // Use our independently tracked tool calls instead of AI SDK parts
+  const displayMessages: DisplayMessage[] = messages.map((msg, index) => {
     // Extract text content from parts
     const textContent = getMessageTextContent(msg)
 
-    // Extract tool invocations from parts (dynamic-tool type in v6)
-    const toolCalls: DisplayMessage['toolCalls'] = []
-    if (msg.parts) {
-      for (const part of msg.parts) {
-        if (part.type === 'dynamic-tool') {
-          // Cast to access dynamic-tool specific properties
-          const toolPart = part as unknown as {
-            toolCallId: string
-            toolName: string
-            state: string
-            input?: unknown
-            output?: unknown
-          }
-          toolCalls.push({
-            id: toolPart.toolCallId,
-            name: toolPart.toolName,
-            input: toolPart.input,
-            output: toolPart.state === 'output-available' ? toolPart.output : undefined,
-          })
+    // For assistant messages, check if this is the last one (currently streaming)
+    // and attach our tracked tool calls
+    let toolCallArray: ToolCallData[] = []
+
+    if (msg.role === 'assistant') {
+      // Count assistant messages to get the index
+      const assistantIndex = messages
+        .slice(0, index + 1)
+        .filter(m => m.role === 'assistant').length - 1
+
+      // Check if this is the last assistant message and we have streaming tools
+      const isLastAssistant = messages
+        .slice(index + 1)
+        .every(m => m.role !== 'assistant')
+
+      if (isLastAssistant && currentStreamTools && currentStreamTools.tools.size > 0) {
+        // This is the streaming message - use current stream tools
+        toolCallArray = Array.from(currentStreamTools.tools.values())
+        log('DisplayMsg', `Using stream tools for assistant ${assistantIndex}`, {
+          count: toolCallArray.length,
+        })
+      } else {
+        // Check completed tool calls
+        const completed = completedToolCalls.get(assistantIndex)
+        if (completed) {
+          toolCallArray = completed
         }
       }
     }
@@ -466,7 +629,7 @@ function ChatView() {
       id: msg.id,
       role: msg.role as 'user' | 'assistant',
       content: textContent,
-      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      toolCalls: toolCallArray.length > 0 ? toolCallArray : undefined,
     }
   })
 
@@ -547,13 +710,9 @@ const ChatMessage = memo(function ChatMessage({ message }: ChatMessageProps) {
         </div>
       ) : (
         <div className="text-left">
-          {/* Tool calls display */}
+          {/* Tool calls display - using new component */}
           {message.toolCalls && message.toolCalls.length > 0 && (
-            <div className="mb-2 space-y-2">
-              {message.toolCalls.map(tool => (
-                <ToolCallDisplay key={tool.id} tool={tool} />
-              ))}
-            </div>
+            <ToolCallList tools={message.toolCalls} />
           )}
           {/* Main content */}
           {message.content && <MarkdownRenderer content={message.content} />}
@@ -563,49 +722,6 @@ const ChatMessage = memo(function ChatMessage({ message }: ChatMessageProps) {
   )
 })
 
-interface ToolCallDisplayProps {
-  tool: {
-    id: string
-    name: string
-    input: unknown
-    output?: unknown
-  }
-}
-
-function ToolCallDisplay({ tool }: ToolCallDisplayProps) {
-  const [isExpanded, setIsExpanded] = useState(false)
-
-  return (
-    <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="flex items-center gap-2 w-full px-3 py-2 text-left hover:bg-muted/50 transition-colors"
-      >
-        <div className="flex items-center justify-center w-5 h-5 rounded bg-primary/20">
-          <Settings className="w-3 h-3 text-primary" />
-        </div>
-        <span className="text-xs font-medium text-muted-foreground">Tool: {tool.name}</span>
-        <span className="text-xs text-muted-foreground ml-auto">{isExpanded ? '▼' : '▶'}</span>
-      </button>
-      {isExpanded && (
-        <div className="px-3 pb-2 text-xs">
-          <div className="mb-1 text-muted-foreground">Input:</div>
-          <pre className="p-2 rounded bg-muted/50 overflow-x-auto text-foreground">
-            {JSON.stringify(tool.input, null, 2)}
-          </pre>
-          {tool.output !== undefined && (
-            <>
-              <div className="mt-2 mb-1 text-muted-foreground">Output:</div>
-              <pre className="p-2 rounded bg-muted/50 overflow-x-auto text-foreground max-h-40 overflow-y-auto">
-                {typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2)}
-              </pre>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
 
 interface EmptyStateProps {
   onSuggestionClick: (text: string) => void

@@ -80,14 +80,10 @@ class SessionManager:
                     connection=connection,
                     websocket=websocket
                 )
-                short_id = session_id[:8] if session_id else "none"
-                logger.info(f"Session accepted [{short_id}]")
                 return AcceptDecision(accept=True)
             
             # Existing session with same or higher conn_seq - reject
             if conn_seq <= existing.conn_seq:
-                short_id = session_id[:8] if session_id else "none"
-                logger.warning(f"Rejected older connection [{short_id}] seq={conn_seq}")
                 return AcceptDecision(
                     accept=False,
                     reason=f"Connection sequence {conn_seq} <= current {existing.conn_seq}"
@@ -104,9 +100,6 @@ class SessionManager:
                 connection=connection,
                 websocket=websocket
             )
-            
-            short_id = session_id[:8] if session_id else "none"
-            logger.info(f"Superseding connection [{short_id}] seq={old_conn_seq}→{conn_seq}")
             
             return AcceptDecision(accept=True, supersede=old_websocket)
     
@@ -132,7 +125,6 @@ class SessionManager:
             entry = self._sessions.get(session_id)
             if entry is not None and entry.websocket is websocket:
                 del self._sessions[session_id]
-                logger.info(f"Cleared session: {session_id}")
                 return True
             return False
     
@@ -210,7 +202,6 @@ class SessionManager:
         async with self._lock:
             count = len(self._sessions)
             self._sessions.clear()
-            logger.info(f"Cleared all {count} sessions")
             return count
 
 
@@ -241,14 +232,6 @@ class UnitySessionManager(SessionManager):
         
         if decision.accept and project_path:
             async with self._lock:
-                # Clear old project mapping if exists
-                old_session = self._project_to_session.get(project_path)
-                if old_session and old_session != session_id:
-                    logger.info(
-                        f"Project {project_path} switching from session "
-                        f"{old_session} to {session_id}"
-                    )
-                
                 self._project_to_session[project_path] = session_id
                 connection.project_path = project_path
         
@@ -282,7 +265,6 @@ class UnitySessionManager(SessionManager):
                     )
                 
                 del self._sessions[session_id]
-                logger.info(f"Cleared Unity session: {session_id}")
                 return True
             return False
     

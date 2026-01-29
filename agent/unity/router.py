@@ -92,7 +92,6 @@ class MessageRouter:
         try:
             text = raw_data if isinstance(raw_data, str) else raw_data.decode('utf-8')
             data = json.loads(text)
-            logger.info(f"🔍 Router parsed: type={data.get('type')}, id={data.get('id')}")
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.warning(f"Invalid JSON from [{connection.cid}]: {e}")
             return None
@@ -102,17 +101,9 @@ class MessageRouter:
         if msg is None:
             return None
 
-        logger.info(f"🔍 Router validated msg: type={msg.type}, id={msg.id}")
-
         # Update session from message if present
         if msg.session:
             connection.session = msg.session
-        
-        # Log message receipt
-        logger.debug(
-            f"Message received [{connection.cid}] type={msg.type} "
-            f"session={msg.session or connection.session}"
-        )
         
         # Handle special message types
         handled = await self._handle_special_types(ws, connection, msg)
@@ -198,7 +189,6 @@ class MessageRouter:
         # ACK (acknowledgment of our message)
         if msg_type == "ack":
             # Could track ACKs for delivery confirmation
-            logger.debug(f"ACK received for {msg.id}")
             return True
         
         # Pong (response to our heartbeat)
@@ -247,8 +237,6 @@ class MessageRouter:
         )
         # Use the original message ID for correlation
         ack.id = msg_id
-        
-        logger.debug(f"Sending ACK for message {msg_id} to [{cid}]")
         
         if self.callbacks.send_to_client:
             await self.callbacks.send_to_client(ws, ack.to_dict())
