@@ -63,6 +63,9 @@ from database import init_database, close_database, get_checkpoint_saver, get_da
 # Agent factory (will be initialized after database)
 from agent import create_movesia_agent
 
+# Unity tools - need to register unity_manager
+from unity_tools import set_unity_manager
+
 
 # =============================================================================
 # Global Configuration
@@ -94,6 +97,9 @@ unity_manager = UnityManager(
     interrupt_manager=interrupt_manager,
     on_domain_event=handle_unity_domain_event
 )
+
+# Register unity_manager with tools so they can communicate via WebSocket
+set_unity_manager(unity_manager)
 
 # Agent and streamer will be initialized during startup after database is ready
 graph = None

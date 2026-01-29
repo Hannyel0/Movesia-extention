@@ -2,7 +2,7 @@
 Unity Tools Package - The 6 Golden Tools for Unity Editor manipulation.
 
 This package provides a clean interface for AI agents to interact with the Unity Editor
-through a middleware connection.
+through WebSocket communication via the UnityManager.
 
 Tools:
 - unity_query: The Observer - read-only inspection
@@ -11,9 +11,15 @@ Tools:
 - unity_prefab: The Factory - templates and instances
 - unity_scene: The Director - environment management
 - unity_refresh: The Compiler - script compilation
+
+Setup:
+    Before using tools, register the Unity manager:
+
+        from unity_tools import set_unity_manager
+        set_unity_manager(unity_manager)
 """
 
-from .connection import call_unity, MIDDLEWARE_URL
+from .connection import call_unity_async, set_unity_manager, get_unity_manager
 from .query import unity_query
 from .hierarchy import unity_hierarchy
 from .component import unity_component
@@ -33,8 +39,9 @@ unity_tools = [
 
 __all__ = [
     # Connection utilities
-    "call_unity",
-    "MIDDLEWARE_URL",
+    "call_unity_async",
+    "set_unity_manager",
+    "get_unity_manager",
     # Individual tools
     "unity_query",
     "unity_hierarchy",

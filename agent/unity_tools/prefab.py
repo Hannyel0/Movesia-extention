@@ -7,9 +7,9 @@ Consumes: instantiate_prefab, instantiate_prefab_by_name, create_prefab,
 import json
 from typing import Literal, Optional, List
 from pydantic import BaseModel, Field
-from langchain_core.tools import tool
+from langchain_core.tools import StructuredTool
 
-from .connection import call_unity
+from .connection import call_unity_async
 
 
 class PrefabSchema(BaseModel):
@@ -33,8 +33,7 @@ class PrefabSchema(BaseModel):
     properties: Optional[dict] = Field(None, description="Properties to edit on the prefab ASSET.")
 
 
-@tool(args_schema=PrefabSchema)
-def unity_prefab(
+async def _unity_prefab(
     action: Literal["instantiate", "instantiate_by_name", "create_asset", "modify_asset", "apply", "revert"],
     asset_path: Optional[str] = None,
     prefab_name: Optional[str] = None,
@@ -70,7 +69,7 @@ def unity_prefab(
         params = {"assetPath": asset_path, "position": position}
         if rotation:
             params["rotation"] = rotation
-        result = call_unity("instantiate_prefab", **params)
+        result = await call_unity_async("instantiate_prefab", **params)
     elif action == "instantiate_by_name":
         if prefab_name is None:
             return json.dumps({
@@ -81,7 +80,7 @@ def unity_prefab(
         params = {"prefabName": prefab_name, "position": position}
         if rotation:
             params["rotation"] = rotation
-        result = call_unity("instantiate_prefab_by_name", **params)
+        result = await call_unity_async("instantiate_prefab_by_name", **params)
     elif action == "create_asset":
         if instance_id is None:
             return json.dumps({
@@ -95,7 +94,7 @@ def unity_prefab(
                 "hint": "Specify where to save the new prefab (must end with .prefab)",
                 "example": "unity_prefab(action='create_asset', instance_id=-74268, asset_path='Assets/Prefabs/NewPrefab.prefab')"
             })
-        result = call_unity("create_prefab", instanceId=instance_id, savePath=asset_path)
+        result = await call_unity_async("create_prefab", instanceId=instance_id, savePath=asset_path)
     elif action == "modify_asset":
         if asset_path is None:
             return json.dumps({
@@ -115,7 +114,7 @@ def unity_prefab(
                 "hint": "Use array format for vectors: {'m_LocalScale': [2, 2, 2]}",
                 "example": "unity_prefab(action='modify_asset', asset_path='Assets/Prefabs/Enemy.prefab', component_type='Transform', properties={'m_LocalScale': [2, 2, 2]})"
             })
-        result = call_unity("modify_prefab", assetPath=asset_path, componentType=component_type, properties=properties)
+        result = await call_unity_async("modify_prefab", assetPath=asset_path, componentType=component_type, properties=properties)
     elif action == "apply":
         if instance_id is None:
             return json.dumps({
@@ -123,7 +122,7 @@ def unity_prefab(
                 "hint": "First use unity_query(action='hierarchy') to find the prefab instance ID in the scene",
                 "example": "unity_prefab(action='apply', instance_id=-74268)"
             })
-        result = call_unity("apply_prefab", instanceId=instance_id)
+        result = await call_unity_async("apply_prefab", instanceId=instance_id)
     elif action == "revert":
         if instance_id is None:
             return json.dumps({
@@ -131,8 +130,27 @@ def unity_prefab(
                 "hint": "First use unity_query(action='hierarchy') to find the prefab instance ID in the scene",
                 "example": "unity_prefab(action='revert', instance_id=-74268)"
             })
-        result = call_unity("revert_prefab", instanceId=instance_id)
+        result = await call_unity_async("revert_prefab", instanceId=instance_id)
     else:
         result = {"error": f"Unknown action: {action}"}
 
     return json.dumps(result, indent=2)
+
+
+# Create the async tool using StructuredTool
+unity_prefab = StructuredTool.from_function(
+    coroutine=_unity_prefab,
+    name="unity_prefab",
+    description="""Manage Prefab Assets and Instances. This is the "Factory".
+
+Actions:
+- 'instantiate': Spawn a prefab into the scene by asset path.
+- 'instantiate_by_name': Search and spawn by name (easiest way to spawn known assets).
+- 'create_asset': Create a new prefab from a scene GameObject.
+- 'modify_asset': Edit the .prefab file directly without opening it.
+- 'apply': Push scene instance changes back to the prefab asset.
+- 'revert': Reset scene instance to match the prefab asset.
+
+Use 'instantiate_by_name' when you know the prefab name but not the exact path.""",
+    args_schema=PrefabSchema,
+)

@@ -6,9 +6,9 @@ Consumes: add_component, remove_component, modify_component
 import json
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
-from langchain_core.tools import tool
+from langchain_core.tools import StructuredTool
 
-from .connection import call_unity
+from .connection import call_unity_async
 
 
 class ComponentSchema(BaseModel):
@@ -41,8 +41,7 @@ class ComponentSchema(BaseModel):
     )
 
 
-@tool(args_schema=ComponentSchema)
-def unity_component(
+async def _unity_component(
     action: Literal["add", "remove", "modify"],
     game_object_id: Optional[int] = None,
     component_type: Optional[str] = None,
@@ -82,7 +81,7 @@ def unity_component(
                 "hint": "Specify the component type to add (e.g., Rigidbody, BoxCollider, AudioSource)",
                 "example": "unity_component(action='add', game_object_id=-74268, component_type='Rigidbody')"
             })
-        result = call_unity("add_component", instanceId=game_object_id, componentType=component_type)
+        result = await call_unity_async("add_component", instanceId=game_object_id, componentType=component_type)
 
     elif action == "modify":
         if properties is None:
@@ -109,14 +108,14 @@ def unity_component(
                 "hint": "Easiest: use game_object_id + component_type, e.g., game_object_id=-74268, component_type='Transform'"
             })
 
-        result = call_unity("modify_component", **params)
+        result = await call_unity_async("modify_component", **params)
 
     elif action == "remove":
         # Build params - support both targeting methods
         if component_id is not None:
-            result = call_unity("remove_component", componentInstanceId=component_id)
+            result = await call_unity_async("remove_component", componentInstanceId=component_id)
         elif game_object_id is not None and component_type is not None:
-            result = call_unity("remove_component",
+            result = await call_unity_async("remove_component",
                               gameObjectInstanceId=game_object_id,
                               componentType=component_type,
                               componentIndex=component_index)
@@ -130,3 +129,28 @@ def unity_component(
         result = {"error": f"Unknown action: {action}"}
 
     return json.dumps(result, indent=2)
+
+
+# Create the async tool using StructuredTool
+unity_component = StructuredTool.from_function(
+    coroutine=_unity_component,
+    name="unity_component",
+    description="""Edit components on GameObjects. This is the "Engineer".
+
+Actions:
+- 'add': Attach a component. Requires game_object_id + component_type.
+- 'modify': Change properties. Use EITHER component_id OR (game_object_id + component_type).
+- 'remove': Delete a component. Use EITHER component_id OR (game_object_id + component_type).
+
+RECOMMENDED WORKFLOW FOR MODIFY:
+Just use game_object_id + component_type - no need to inspect first!
+Example: unity_component(action='modify', game_object_id=-74268, component_type='Transform',
+                        properties={'m_LocalPosition': [0, 5, 0]})
+
+PROPERTY FORMAT:
+- Vectors use ARRAYS: {'m_LocalPosition': [0, 5, 0]} ✓
+- NOT objects: {'m_LocalPosition': {'x': 0}} ✗
+
+Common types: Transform, Rigidbody, BoxCollider, SphereCollider, MeshRenderer, AudioSource, Light, Camera""",
+    args_schema=ComponentSchema,
+)

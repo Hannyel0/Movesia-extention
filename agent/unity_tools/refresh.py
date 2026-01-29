@@ -2,11 +2,14 @@
 THE COMPILER: unity_refresh
 "I need to compile my code."
 Consumes: refresh_assets
+
+Note: This tool uses LangGraph's interrupt() to pause execution while Unity compiles.
+The interrupt is handled by the agent harness which communicates with Unity via WebSocket.
 """
 import json
 from typing import Optional, List
 from pydantic import BaseModel, Field
-from langchain_core.tools import tool
+from langchain_core.tools import StructuredTool
 from langgraph.types import interrupt
 
 
@@ -21,8 +24,7 @@ class RefreshSchema(BaseModel):
     )
 
 
-@tool(args_schema=RefreshSchema)
-def unity_refresh(watched_scripts: Optional[List[str]] = None, type_limit: int = 20) -> str:
+def _unity_refresh(watched_scripts: Optional[List[str]] = None, type_limit: int = 20) -> str:
     """
     Trigger Unity Asset Database refresh and Script Compilation.
     This is "The Compiler".
@@ -37,7 +39,7 @@ def unity_refresh(watched_scripts: Optional[List[str]] = None, type_limit: int =
     """
 
     # ---------------------------------------------------------
-    # BUILD THE REQUEST (will be sent to middleware by harness)
+    # BUILD THE REQUEST (will be sent to Unity by harness)
     # ---------------------------------------------------------
     params = {"typeLimit": type_limit}
     if watched_scripts:
@@ -49,10 +51,10 @@ def unity_refresh(watched_scripts: Optional[List[str]] = None, type_limit: int =
     }
 
     # ---------------------------------------------------------
-    # INTERRUPT: Pause agent, let harness call middleware
+    # INTERRUPT: Pause agent, let harness call Unity via WebSocket
     # ---------------------------------------------------------
-    # The harness catches this, calls middleware, waits for Unity,
-    # then resumes with Unity's response as the return value
+    # The harness catches this, sends command to Unity via WebSocket,
+    # waits for compilation to complete, then resumes with Unity's response
     print(f"DEBUG: Pausing for compilation... request={compile_request}")
     result = interrupt(compile_request)  # <-- Returns Unity's response after resume
     print(f"DEBUG: Resumed from compilation. result={result}")
@@ -106,3 +108,22 @@ def unity_refresh(watched_scripts: Optional[List[str]] = None, type_limit: int =
             response["next_step"] = "You can now use unity_component(action='add') with these scripts."
 
     return json.dumps(response, indent=2)
+
+
+# Create the tool using StructuredTool
+# Note: This tool is synchronous because interrupt() is synchronous
+# The async behavior is handled by the LangGraph runtime
+unity_refresh = StructuredTool.from_function(
+    func=_unity_refresh,
+    name="unity_refresh",
+    description="""Trigger Unity Asset Database refresh and Script Compilation. This is "The Compiler".
+
+CRITICAL: You MUST use this tool after creating or editing C# scripts (.cs files).
+Unity cannot add a component until the script is compiled.
+
+Behavior:
+1. Pauses agent execution while Unity compiles (handled by orchestrator).
+2. Returns 'compilationErrors' if syntax errors exist.
+3. Confirms if 'watched_scripts' are now valid components.""",
+    args_schema=RefreshSchema,
+)

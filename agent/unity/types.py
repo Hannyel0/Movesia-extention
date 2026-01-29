@@ -39,6 +39,7 @@ class MovesiaMessage:
     id: str  # Unique message ID
     body: dict = field(default_factory=dict)
     session: Optional[str] = None
+    v: int = 1  # Protocol version
     
     @classmethod
     def create(
@@ -50,11 +51,15 @@ class MovesiaMessage:
     ) -> "MovesiaMessage":
         """Factory method to create a new message with auto-generated ID and timestamp."""
         import uuid
+        import logging
+        logger = logging.getLogger("movesia.types")
+        msg_id = str(uuid.uuid4())
+        logger.info(f"🆕 MovesiaMessage.create(): type={msg_type}, id={msg_id}")
         return cls(
             source=source,
             type=msg_type,
             ts=int(time.time()),
-            id=str(uuid.uuid4()),
+            id=msg_id,
             body=body,
             session=session
         )
@@ -62,6 +67,7 @@ class MovesiaMessage:
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
+            "v": self.v,
             "source": self.source.value if isinstance(self.source, ConnectionSource) else self.source,
             "type": self.type,
             "ts": self.ts,
@@ -86,7 +92,8 @@ class MovesiaMessage:
             ts=data.get("ts", int(time.time())),
             id=data.get("id", ""),
             body=data.get("body", {}),
-            session=data.get("session")
+            session=data.get("session"),
+            v=data.get("v", 1)
         )
 
 

@@ -92,15 +92,18 @@ class MessageRouter:
         try:
             text = raw_data if isinstance(raw_data, str) else raw_data.decode('utf-8')
             data = json.loads(text)
+            logger.info(f"🔍 Router parsed: type={data.get('type')}, id={data.get('id')}")
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.warning(f"Invalid JSON from [{connection.cid}]: {e}")
             return None
-        
+
         # Validate message envelope
         msg = self._validate_message(data, connection.cid)
         if msg is None:
             return None
-        
+
+        logger.info(f"🔍 Router validated msg: type={msg.type}, id={msg.id}")
+
         # Update session from message if present
         if msg.session:
             connection.session = msg.session

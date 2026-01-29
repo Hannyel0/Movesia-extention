@@ -7,9 +7,9 @@ Consumes: create_gameobject, duplicate_gameobject, destroy_gameobject,
 import json
 from typing import Literal, Optional, List
 from pydantic import BaseModel, Field
-from langchain_core.tools import tool
+from langchain_core.tools import StructuredTool
 
-from .connection import call_unity
+from .connection import call_unity_async
 
 
 class HierarchySchema(BaseModel):
@@ -30,8 +30,7 @@ class HierarchySchema(BaseModel):
     target_scene: Optional[str] = Field(None, description="Scene name for 'move_scene'.")
 
 
-@tool(args_schema=HierarchySchema)
-def unity_hierarchy(
+async def _unity_hierarchy(
     action: Literal["create", "duplicate", "destroy", "rename", "reparent", "move_scene"],
     instance_id: Optional[int] = None,
     name: Optional[str] = None,
@@ -128,5 +127,22 @@ def unity_hierarchy(
         params["instanceId"] = instance_id
         params["sceneName"] = target_scene
 
-    result = call_unity(api_map[action], **params)
+    result = await call_unity_async(api_map[action], **params)
     return json.dumps(result, indent=2)
+
+
+# Create the async tool using StructuredTool
+unity_hierarchy = StructuredTool.from_function(
+    coroutine=_unity_hierarchy,
+    name="unity_hierarchy",
+    description="""Manage GameObject structure in the scene hierarchy. This is the "Architect".
+
+Actions:
+- 'create': Make new empty objects or primitives (Cube, Sphere, etc.).
+- 'duplicate': Clone an existing GameObject.
+- 'destroy': Remove objects (Undo supported).
+- 'rename': Change a GameObject's name.
+- 'reparent': Move objects in the hierarchy tree.
+- 'move_scene': Move root objects between loaded scenes.""",
+    args_schema=HierarchySchema,
+)

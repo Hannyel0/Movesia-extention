@@ -105,7 +105,10 @@ class UnityManager:
         
         # Connection change callbacks
         self._connection_callbacks: list[Callable[[bool], Awaitable[None]]] = []
-    
+
+        # Pending commands awaiting responses (keyed by message ID)
+        self._pending_commands: Dict[str, asyncio.Future] = {}
+
     # =========================================================================
     # Public API
     # =========================================================================
@@ -253,34 +256,32 @@ class UnityManager:
             raise RuntimeError("No Unity connection available")
         
         timeout = timeout or self.config.command_timeout
-        
-        # Generate request ID
-        request_id = str(uuid.uuid4())
-        
+
         # Create and send command
         msg = MovesiaMessage.create(
             msg_type=command_type,
-            body={"request_id": request_id, **kwargs},
+            body=kwargs,  # No need for request_id - we use msg.id for correlation
             source=ConnectionSource.VSCODE,
             session=self._current_session
         )
-        
-        # Register for response
+
+        # Register for response using message ID (Unity echoes this back)
         future: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending_commands[request_id] = future
-        
+        self._pending_commands[msg.id] = future
+        logger.info(f"📤 Registered pending command: msg.id={msg.id}, pending_commands={list(self._pending_commands.keys())}")
+
         try:
             await send_to_client(self._current_ws, msg.to_dict())
-            
-            logger.debug(f"Sent command {command_type} [{request_id}]")
-            
+
+            logger.info(f"Sent command {command_type} [msg.id={msg.id}]")
+
             return await asyncio.wait_for(future, timeout)
-            
+
         except asyncio.TimeoutError:
             logger.warning(f"Command {command_type} timed out after {timeout}s")
             raise
         finally:
-            self._pending_commands.pop(request_id, None)
+            self._pending_commands.pop(msg.id, None)
     
     @property
     def is_connected(self) -> bool:
@@ -340,32 +341,41 @@ class UnityManager:
     # =========================================================================
     # Private Implementation
     # =========================================================================
-    
-    _pending_commands: Dict[str, asyncio.Future] = {}
-    
+
     async def _message_loop(
-        self, 
-        websocket: WebSocket, 
+        self,
+        websocket: WebSocket,
         connection: ExtendedConnection
     ) -> None:
         """Main loop for receiving and processing messages."""
         while True:
             # Receive message
             data = await websocket.receive_text()
-            
+
+            # Log raw data to see exactly what Unity sent
+            import json
+            try:
+                raw_parsed = json.loads(data)
+                logger.info(f"📥 RAW from Unity: type={raw_parsed.get('type')}, id={raw_parsed.get('id')}")
+            except:
+                logger.info(f"📥 RAW from Unity (unparseable): {data[:200]}")
+
             # Route through message router
             msg = await self._router.handle_message(websocket, connection, data)
-            
+
             if msg is None:
                 continue
-            
-            # Check if this is a response to a pending command
-            request_id = msg.body.get("request_id")
-            if request_id and request_id in self._pending_commands:
-                future = self._pending_commands.get(request_id)
+
+            # Check if this is a response to a pending command (matched by message ID)
+            # Unity echoes back the original message ID in its response
+            logger.info(f"Checking msg.id={msg.id} against pending_commands: {list(self._pending_commands.keys())}")
+            if msg.id in self._pending_commands:
+                future = self._pending_commands.get(msg.id)
                 if future and not future.done():
                     future.set_result(msg.body)
-                    logger.debug(f"Received response for [{request_id}]")
+                    logger.info(f"✅ Resolved response for [msg.id={msg.id}]")
+            else:
+                logger.info(f"❌ No match for msg.id={msg.id}")
     
     async def _cleanup_connection(
         self,
