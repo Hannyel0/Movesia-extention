@@ -6,6 +6,7 @@ import { Button } from './lib/components/ui/button'
 import { cn } from './lib/utils'
 import { MarkdownRenderer } from './lib/components/MarkdownRenderer'
 import { ChatInput } from './lib/components/ChatInput'
+import { ThreadSelector, type Thread } from './lib/components/ThreadSelector'
 
 // Configuration - update this to match your agent server
 const API_BASE_URL = 'http://127.0.0.1:8765'
@@ -103,9 +104,68 @@ function createUIMessageChunkStream(response: Response): ReadableStream<any> {
   })
 }
 
+// Mock threads data for UI demonstration
+const mockThreads: Thread[] = [
+  {
+    id: 'thread-1',
+    title: 'so right now what i need is actually for you ...',
+    createdAt: new Date(Date.now() - 1000 * 60 * 6), // 6 mins ago
+    messageCount: 4,
+  },
+  {
+    id: 'thread-2',
+    title: 'now what i need you to do is to disconnect th...',
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 10), // 10 hours ago
+    messageCount: 8,
+  },
+  {
+    id: 'thread-3',
+    title: 'I need you to analyze this complete extention...',
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 21), // 21 hours ago
+    messageCount: 12,
+  },
+  {
+    id: 'thread-4',
+    title: 'for the markdown renderer file ont he compone...',
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 21), // 21 hours ago
+    messageCount: 6,
+  },
+  {
+    id: 'thread-5',
+    title: 'i just added a new component the MarkdowRende...',
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 21), // 21 hours ago
+    messageCount: 15,
+  },
+  {
+    id: 'thread-6',
+    title: 'analyze my project really well so you know wh...',
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 23), // 23 hours ago
+    messageCount: 9,
+  },
+  {
+    id: 'thread-7',
+    title: 'Now what i need you to do is to actually anal...',
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 day ago
+    messageCount: 18,
+  },
+  {
+    id: 'thread-8',
+    title: 'analyze the view1 file and fix the errors on ...',
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 day ago
+    messageCount: 7,
+  },
+  {
+    id: 'thread-9',
+    title: 'could you please analyze this movesia extenti...',
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 day ago
+    messageCount: 22,
+  },
+]
+
 function ChatView() {
   const [inputValue, setInputValue] = useState('')
   const [threadId, setThreadId] = useState<string | null>(null)
+  const [threads, setThreads] = useState<Thread[]>(mockThreads)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   log('Component', 'ChatView render', { threadId, inputValue: inputValue.slice(0, 20) })
@@ -255,6 +315,30 @@ function ChatView() {
     setThreadId(null)
   }, [setMessages])
 
+  // Thread handlers (UI only - no logic implementation)
+  const handleSelectThread = useCallback((id: string) => {
+    log('Thread', `Selected thread: ${id}`)
+    setThreadId(id)
+    // TODO: Load thread messages
+  }, [])
+
+  const handleNewThread = useCallback(() => {
+    log('Thread', 'Creating new thread')
+    setThreadId(null)
+    setMessages([])
+    // TODO: Create new thread
+  }, [setMessages])
+
+  const handleDeleteThread = useCallback((id: string) => {
+    log('Thread', `Deleting thread: ${id}`)
+    setThreads(prev => prev.filter(t => t.id !== id))
+    if (threadId === id) {
+      setThreadId(null)
+      setMessages([])
+    }
+    // TODO: Delete thread from backend
+  }, [threadId, setMessages])
+
   const handleStop = useCallback(() => {
     log('Stop', 'Stopping generation')
     stop()
@@ -299,17 +383,15 @@ function ChatView() {
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background text-foreground">
       {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <div className="flex items-center gap-2">
-          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
-            <Sparkles className="w-4 h-4 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-sm font-semibold">Movesia AI Assistant</h1>
-            <p className="text-xs text-muted-foreground">Unity Editor Integration</p>
-          </div>
-        </div>
-        <Button variant="ghost" size="icon" onClick={clearChat} title="Clear chat">
+      <header className="flex items-center justify-between px-3 py-2 border-b border-border">
+        <ThreadSelector
+          threads={threads}
+          currentThreadId={threadId}
+          onSelectThread={handleSelectThread}
+          onNewThread={handleNewThread}
+          onDeleteThread={handleDeleteThread}
+        />
+        <Button variant="ghost" size="icon" onClick={clearChat} title="Settings">
           <Settings className="w-4 h-4" />
         </Button>
       </header>
