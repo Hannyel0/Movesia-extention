@@ -1,10 +1,9 @@
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 from dotenv import load_dotenv
 from tavily import TavilyClient
 from langchain.agents import create_agent
-from langgraph.checkpoint.memory import MemorySaver
 from deepagents.backends import CompositeBackend, StateBackend, StoreBackend, FilesystemBackend
 from deepagents.middleware.filesystem import FilesystemMiddleware
 # from langchain.agents.middleware import TodoListMiddleware
@@ -62,17 +61,35 @@ def make_composite_backend(runtime):
     )
 
 
-# Memory checkpointer for conversation persistence across messages
-memory = MemorySaver()
+# Checkpointer will be injected by server.py after database initialization
+# This allows us to use AsyncSqliteSaver for persistent checkpoints
+_checkpointer = None
 
-agent = create_agent(
-    model=model,
-    tools=[internet_search, *unity_tools],
-    system_prompt=UNITY_AGENT_PROMPT,
-    middleware=[
-        # TodoListMiddleware(),  # Original - ~1,400 tokens
-        OptimizedTodoMiddleware(),  # Optimized - ~520 tokens (balanced mode)
-        FilesystemMiddleware(backend=make_composite_backend),
-    ],
-    checkpointer=memory,  # Enable conversation memory
-)
+
+def create_movesia_agent(checkpointer=None):
+    """
+    Create the Movesia agent with the given checkpointer.
+
+    Args:
+        checkpointer: LangGraph checkpointer (AsyncSqliteSaver or MemorySaver)
+
+    Returns:
+        Compiled LangGraph agent
+    """
+    return create_agent(
+        model=model,
+        tools=[internet_search, *unity_tools],
+        system_prompt=UNITY_AGENT_PROMPT,
+        middleware=[
+            # TodoListMiddleware(),  # Original - ~1,400 tokens
+            OptimizedTodoMiddleware(),  # Optimized - ~520 tokens (balanced mode)
+            FilesystemMiddleware(backend=make_composite_backend),
+        ],
+        checkpointer=checkpointer,
+    )
+
+
+# For backwards compatibility, create a default agent with MemorySaver
+# This will be replaced by server.py with the database-backed checkpointer
+from langgraph.checkpoint.memory import MemorySaver
+agent = create_movesia_agent(checkpointer=MemorySaver())

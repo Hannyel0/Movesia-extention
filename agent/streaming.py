@@ -3,6 +3,8 @@ Agent Execution with Streaming.
 
 Handles running the LangGraph agent and streaming responses to clients.
 Also manages interrupts by waiting for Unity and resuming.
+
+Messages are automatically persisted by LangGraph's checkpointer.
 """
 
 from typing import Optional
@@ -27,6 +29,9 @@ class AgentStreamer:
         """
         Run the agent and stream responses to the client.
         Handles interrupts by waiting for Unity and resuming.
+
+        Messages are automatically persisted by LangGraph's checkpointer
+        when using a thread_id in the config.
         """
         input_data = {"messages": [("human", user_message)]}
 

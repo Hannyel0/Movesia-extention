@@ -6,6 +6,7 @@ This server orchestrates:
 2. WebSocket server for VS Code extension chat
 3. LangGraph agent execution with streaming
 4. Interrupt handling for async Unity operations
+5. SQLite database for message persistence
 
 Architecture:
 ┌─────────────────────────────────────────────────────────────┐
@@ -13,10 +14,12 @@ Architecture:
 ├─────────────────────────────────────────────────────────────┤
 │  /ws/chat/{session}  ←── VS Code webview connects here      │
 │  /ws/unity           ←── Unity Editor connects here         │
+│  /api/conversations  ←── REST API for history               │
 │                                                              │
-│  ┌─────────────────┐                                        │
-│  │ LangGraph Agent │  Streams tokens, tool calls            │
-│  └────────┬────────┘                                        │
+│  ┌─────────────────┐      ┌─────────────────┐              │
+│  │ LangGraph Agent │      │   SQLite DB     │              │
+│  │  (streaming)    │ ←──► │  (persistence)  │              │
+│  └────────┬────────┘      └─────────────────┘              │
 │           │                                                  │
 │           ▼                                                  │
 │  ┌─────────────────┐      ┌─────────────────┐              │
@@ -49,12 +52,16 @@ from managers import InterruptManager, ChatManager
 # Chat routes
 from routes import chat_router, chat_sse_router
 from routes.chat_ws import init_chat_routes
+from routes.chat_sse import init_chat_sse_routes
 
 # Agent streaming
 from streaming import AgentStreamer
 
-# Your existing agent
-from agent import agent
+# Database
+from database import init_database, close_database, get_checkpoint_saver, get_database_path
+
+# Agent factory (will be initialized after database)
+from agent import create_movesia_agent
 
 
 # =============================================================================
@@ -88,13 +95,9 @@ unity_manager = UnityManager(
     on_domain_event=handle_unity_domain_event
 )
 
-# The agent is already compiled by create_agent() in agent.py
-# We pass it directly to the streamer
-# Note: To enable checkpointing, pass checkpointer=MemorySaver() to create_agent() in agent.py
-graph = agent
-
-# Create agent streamer
-agent_streamer = AgentStreamer(graph, interrupt_manager)
+# Agent and streamer will be initialized during startup after database is ready
+graph = None
+agent_streamer = None
 
 
 # =============================================================================
@@ -104,12 +107,34 @@ agent_streamer = AgentStreamer(graph, interrupt_manager)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown."""
+    global graph, agent_streamer
+
+    # Initialize database first
+    logger.info("Initializing database...")
+    await init_database()
+
+    # Create agent with database-backed checkpointer
+    checkpointer = get_checkpoint_saver()
+    graph = create_movesia_agent(checkpointer=checkpointer)
+    logger.info("Agent created with persistent checkpointer")
+
+    # Create agent streamer
+    agent_streamer = AgentStreamer(graph, interrupt_manager)
+
+    # Initialize route dependencies (must happen after agent_streamer is created)
+    init_chat_routes(chat_manager, unity_manager, agent_streamer.stream_response)
+    init_chat_sse_routes(graph)  # SSE endpoint needs the graph with SQLite checkpointer
+
     print_startup_banner(config.server.host, config.server.port)
     logger.info("Server ready and listening for connections")
+
     yield
+
+    # Shutdown
     logger.info("Shutting down...")
     await interrupt_manager.cancel_all()
     await unity_manager.close_all()
+    await close_database()
     logger.info("Goodbye! 👋")
 
 
@@ -125,16 +150,20 @@ app.add_middleware(
     allow_credentials=config.server.cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Thread-Id", "X-Vercel-AI-Ui-Message-Stream"],
 )
 
-# Initialize route dependencies
+# Initialize Unity route dependencies (chat routes initialized in lifespan)
 init_unity_routes(unity_manager)
-init_chat_routes(chat_manager, unity_manager, agent_streamer.stream_response)
 
 # Include routers
 app.include_router(unity_router)
 app.include_router(chat_router)
 app.include_router(chat_sse_router)  # Vercel AI SDK compatible SSE endpoint
+
+# Import and include history routes
+from routes.history import router as history_router
+app.include_router(history_router)
 
 
 # =============================================================================
@@ -161,7 +190,10 @@ async def status():
             "compiling": unity_manager.is_compiling,
             "connections": unity_manager.connection_count
         },
-        "active_chat_sessions": chat_manager.session_count
+        "active_chat_sessions": chat_manager.session_count,
+        "database": {
+            "path": get_database_path(),
+        }
     }
 
 

@@ -5,6 +5,8 @@ Chat WebSocket endpoint - VS Code extension connects here.
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from database.repository import get_repository
+
 logger = logging.getLogger("movesia.chat")
 
 router = APIRouter(tags=["Chat WebSocket"])
@@ -35,8 +37,18 @@ async def chat_websocket_endpoint(websocket: WebSocket, session_id: str):
     short_id = session_id[:8]
     logger.info(f"Chat connected [{short_id}]")
 
+    # Create/update conversation metadata in database
+    repo = get_repository()
+    conversation = await repo.get_or_create(
+        session_id=session_id,
+        unity_project_path=_unity_manager.current_project,
+    )
+
     # LangGraph config with thread_id for conversation memory
     config = {"configurable": {"thread_id": session_id}}
+
+    # Track if we need to update the title (first message)
+    is_first_message = conversation.title is None
 
     # Send initial status
     await websocket.send_json({
@@ -55,6 +67,18 @@ async def chat_websocket_endpoint(websocket: WebSocket, session_id: str):
                 user_message = data.get("content", "")
                 preview = user_message[:50] + "..." if len(user_message) > 50 else user_message
                 logger.info(f"Message [{short_id}]: {preview}")
+
+                # Set conversation title from first user message
+                if is_first_message:
+                    title = user_message[:100].strip()
+                    if len(user_message) > 100:
+                        title += "..."
+                    await repo.update_title(session_id, title)
+                    is_first_message = False
+                else:
+                    # Touch updated_at timestamp
+                    await repo.touch(session_id)
+
                 await _stream_agent_response(websocket, user_message, config)
 
             elif msg_type == "cancel":

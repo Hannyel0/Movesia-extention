@@ -15,10 +15,19 @@ from typing import AsyncGenerator, Any
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from agent import agent
 from utils import safe_serialize, truncate_output
+from database.repository import get_repository
 
 router = APIRouter()
+
+# Will be set by init_chat_sse_routes()
+_graph = None
+
+
+def init_chat_sse_routes(graph):
+    """Initialize the SSE routes with the correct agent graph."""
+    global _graph
+    _graph = graph
 
 # Setup logger for chat SSE
 logger = logging.getLogger("movesia.chat")
@@ -136,11 +145,28 @@ class UIMessageStreamProtocol:
 async def stream_agent_sse(
     user_message: str,
     thread_id: str,
-    protocol: UIMessageStreamProtocol
+    protocol: UIMessageStreamProtocol,
+    is_first_message: bool = False
 ) -> AsyncGenerator[str, None]:
     """Stream agent execution using AI SDK UI Message Stream Protocol."""
+    if _graph is None:
+        raise RuntimeError("SSE routes not initialized. Call init_chat_sse_routes() first.")
+
     config = {"configurable": {"thread_id": thread_id}}
     input_data = {"messages": [("human", user_message)]}
+
+    # Save conversation metadata
+    repo = get_repository()
+    conversation = await repo.get_or_create(session_id=thread_id)
+
+    # Set title from first message
+    if conversation.title is None:
+        title = user_message[:100].strip()
+        if len(user_message) > 100:
+            title += "..."
+        await repo.update_title(thread_id, title)
+    else:
+        await repo.touch(thread_id)
 
     # Track state
     has_text_content = False
@@ -159,7 +185,7 @@ async def stream_agent_sse(
 
         logger.debug("[Stream] Beginning astream_events iteration...")
 
-        async for event in agent.astream_events(input_data, config=config, version="v2"):
+        async for event in _graph.astream_events(input_data, config=config, version="v2"):
             event_count += 1
             kind = event.get("event")
 
@@ -369,11 +395,28 @@ async def chat_sse(request: Request):
             }
         )
 
-    # Thread ID for conversation persistence
+    # ==========================================================================
+    # Thread ID Management for Conversation Continuity
+    # ==========================================================================
+    #
+    # Thread IDs link messages to the same conversation in the LangGraph checkpointer.
+    # The backend handles generation, but the frontend MUST store and resend the ID.
+    #
+    # Flow:
+    # 1. First message  - Frontend sends request WITHOUT threadId
+    # 2. Backend        - Generates thread_id, saves to DB, returns in X-Thread-Id header
+    # 3. Frontend       - Reads X-Thread-Id from response headers and stores it
+    # 4. Next message   - Frontend sends request WITH threadId in body or header
+    # 5. Backend        - Uses existing thread, continues conversation with full history
+    #
+    # If frontend doesn't persist the threadId, each message creates a NEW conversation
+    # and the agent loses all context from previous messages.
+    # ==========================================================================
+
     thread_id = body.get("threadId") or request.headers.get("x-thread-id")
     logger.debug(f"[API] Thread ID from request: {thread_id}")
 
-    # If no thread ID provided, generate one
+    # If no thread ID provided, generate one (new conversation)
     if not thread_id or thread_id == "default":
         thread_id = f"thread_{uuid.uuid4().hex}"
         logger.info(f"[API] Generated new thread ID: {thread_id}")

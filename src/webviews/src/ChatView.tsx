@@ -104,71 +104,67 @@ function createUIMessageChunkStream(response: Response): ReadableStream<any> {
   })
 }
 
-// Mock threads data for UI demonstration
-const mockThreads: Thread[] = [
-  {
-    id: 'thread-1',
-    title: 'so right now what i need is actually for you ...',
-    createdAt: new Date(Date.now() - 1000 * 60 * 6), // 6 mins ago
-    messageCount: 4,
-  },
-  {
-    id: 'thread-2',
-    title: 'now what i need you to do is to disconnect th...',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 10), // 10 hours ago
-    messageCount: 8,
-  },
-  {
-    id: 'thread-3',
-    title: 'I need you to analyze this complete extention...',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 21), // 21 hours ago
-    messageCount: 12,
-  },
-  {
-    id: 'thread-4',
-    title: 'for the markdown renderer file ont he compone...',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 21), // 21 hours ago
-    messageCount: 6,
-  },
-  {
-    id: 'thread-5',
-    title: 'i just added a new component the MarkdowRende...',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 21), // 21 hours ago
-    messageCount: 15,
-  },
-  {
-    id: 'thread-6',
-    title: 'analyze my project really well so you know wh...',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 23), // 23 hours ago
-    messageCount: 9,
-  },
-  {
-    id: 'thread-7',
-    title: 'Now what i need you to do is to actually anal...',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 day ago
-    messageCount: 18,
-  },
-  {
-    id: 'thread-8',
-    title: 'analyze the view1 file and fix the errors on ...',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 day ago
-    messageCount: 7,
-  },
-  {
-    id: 'thread-9',
-    title: 'could you please analyze this movesia extenti...',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 day ago
-    messageCount: 22,
-  },
-]
-
 function ChatView() {
   const [inputValue, setInputValue] = useState('')
   const [threadId, setThreadId] = useState<string | null>(null)
-  const [threads, setThreads] = useState<Thread[]>(mockThreads)
+  const [threads, setThreads] = useState<Thread[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
 
+  // Ref to always have access to current threadId in transport closure
+  const threadIdRef = useRef<string | null>(null)
+  threadIdRef.current = threadId // Keep ref in sync with state
+
   log('Component', 'ChatView render', { threadId, inputValue: inputValue.slice(0, 20) })
+
+  // Fetch conversation details from backend and add to threads list
+  const fetchConversationDetails = useCallback(async (id: string) => {
+    log('Thread', `>>> fetchConversationDetails called with id: ${id}`)
+    try {
+      const url = `${API_BASE_URL}/api/conversations/${id}`
+      log('Thread', `Fetching: ${url}`)
+      const response = await fetch(url)
+
+      log('Thread', `Response status: ${response.status}`)
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        log('Thread', `Failed to fetch conversation: ${response.status}`, errorText)
+        return
+      }
+
+      const data = await response.json()
+      log('Thread', 'Conversation details received', data)
+
+      const title = data.conversation?.title || 'New Chat'
+      log('Thread', `Extracted title: "${title}"`)
+
+      // Add the new thread to the list (or update if exists)
+      setThreads(prev => {
+        log('Thread', `setThreads called, prev threads count: ${prev.length}`, prev)
+        const exists = prev.some(t => t.id === id)
+        log('Thread', `Thread ${id} exists: ${exists}`)
+
+        let newThreads: Thread[]
+        if (exists) {
+          newThreads = prev.map(t => (t.id === id ? { ...t, title } : t))
+        } else {
+          newThreads = [
+            {
+              id,
+              title,
+              createdAt: new Date(),
+              messageCount: 1,
+            },
+            ...prev,
+          ]
+        }
+        log('Thread', `New threads count: ${newThreads.length}`, newThreads)
+        return newThreads
+      })
+    } catch (err) {
+      log('Thread', 'Error fetching conversation details', err)
+    }
+  }, [])
 
   // Vercel AI SDK v6 useChat hook with custom transport
   const {
@@ -183,8 +179,11 @@ function ChatView() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     transport: {
       sendMessages: async ({ messages: chatMessages, abortSignal }) => {
+        // Use ref to get current threadId (avoids stale closure)
+        const currentThreadId = threadIdRef.current
+
         log('Transport', '='.repeat(50))
-        log('Transport', 'sendMessages called', { messageCount: chatMessages.length, threadId })
+        log('Transport', 'sendMessages called', { messageCount: chatMessages.length, threadId: currentThreadId })
 
         const requestBody = {
           messages: chatMessages.map(msg => ({
@@ -192,7 +191,7 @@ function ChatView() {
             role: msg.role,
             content: getMessageTextContent(msg),
           })),
-          threadId,
+          threadId: currentThreadId,
         }
 
         log('Transport', 'Request body', requestBody)
@@ -203,7 +202,7 @@ function ChatView() {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              ...(threadId ? { 'x-thread-id': threadId } : {}),
+              ...(currentThreadId ? { 'x-thread-id': currentThreadId } : {}),
             },
             body: JSON.stringify(requestBody),
             signal: abortSignal,
@@ -214,9 +213,14 @@ function ChatView() {
 
           // Capture thread ID from response headers
           const newThreadId = response.headers.get('x-thread-id')
-          if (newThreadId && newThreadId !== threadId) {
+          log('Transport', `x-thread-id header value: ${newThreadId}`)
+          if (newThreadId && newThreadId !== currentThreadId) {
             log('Transport', `New thread ID received: ${newThreadId}`)
             setThreadId(newThreadId)
+            // Fetch conversation details to get the title
+            fetchConversationDetails(newThreadId)
+          } else if (!newThreadId) {
+            log('Transport', 'WARNING: No x-thread-id header in response!')
           }
 
           if (!response.ok) {
@@ -242,6 +246,43 @@ function ChatView() {
     log('Status', `Status changed to: ${status}`)
   }, [status])
 
+  // Log threads changes
+  useEffect(() => {
+    log('Threads', `Threads state updated, count: ${threads.length}`, threads)
+  }, [threads])
+
+  // Fetch threads from backend on mount
+  useEffect(() => {
+    const fetchThreads = async () => {
+      try {
+        log('Threads', 'Fetching threads from backend...')
+        const response = await fetch(`${API_BASE_URL}/api/conversations`)
+        if (!response.ok) {
+          log('Threads', `Failed to fetch threads: ${response.status}`)
+          return
+        }
+        const data = await response.json()
+        log('Threads', 'Threads fetched from backend', data)
+
+        const loadedThreads: Thread[] = data.conversations.map(
+          (conv: { session_id: string; title: string | null; created_at: string }) => ({
+            id: conv.session_id,
+            title: conv.title || 'New Chat',
+            createdAt: new Date(conv.created_at),
+            messageCount: 0,
+          })
+        )
+
+        setThreads(loadedThreads)
+        log('Threads', `Loaded ${loadedThreads.length} threads from backend`)
+      } catch (err) {
+        log('Threads', 'Error fetching threads', err)
+      }
+    }
+
+    fetchThreads()
+  }, [])
+
   // Log error changes
   useEffect(() => {
     if (error) {
@@ -249,12 +290,12 @@ function ChatView() {
     }
   }, [error])
 
-  // Log message changes
+  // Log message changes (only when message count changes, not during streaming)
+  const prevMessageCountRef = useRef(0)
   useEffect(() => {
-    log('Messages', `Messages updated, count: ${messages.length}`)
-    if (messages.length > 0) {
-      const lastMsg = messages[messages.length - 1]
-      log('Messages', `Last message: role=${lastMsg.role}, parts=${lastMsg.parts?.length || 0}`)
+    if (messages.length !== prevMessageCountRef.current) {
+      log('Messages', `Messages count changed: ${prevMessageCountRef.current} -> ${messages.length}`)
+      prevMessageCountRef.current = messages.length
     }
   }, [messages])
 
@@ -315,12 +356,42 @@ function ChatView() {
     setThreadId(null)
   }, [setMessages])
 
-  // Thread handlers (UI only - no logic implementation)
-  const handleSelectThread = useCallback((id: string) => {
-    log('Thread', `Selected thread: ${id}`)
-    setThreadId(id)
-    // TODO: Load thread messages
-  }, [])
+  // Thread handlers
+  const handleSelectThread = useCallback(
+    async (id: string) => {
+      log('Thread', `Selected thread: ${id}`)
+      setThreadId(id)
+
+      // Load messages for this thread from backend
+      try {
+        log('Thread', `Fetching messages for thread: ${id}`)
+        const response = await fetch(`${API_BASE_URL}/api/conversations/${id}/messages`)
+
+        if (!response.ok) {
+          log('Thread', `Failed to fetch messages: ${response.status}`)
+          return
+        }
+
+        const messagesData = await response.json()
+        log('Thread', `Loaded ${messagesData.length} messages`, messagesData)
+
+        // Convert backend messages to UIMessage format for the AI SDK
+        const uiMessages: UIMessage[] = messagesData.map(
+          (msg: { role: string; content: string }, index: number) => ({
+            id: `${id}-${index}`,
+            role: msg.role as 'user' | 'assistant',
+            parts: [{ type: 'text' as const, text: msg.content }],
+          })
+        )
+
+        setMessages(uiMessages)
+        log('Thread', `Set ${uiMessages.length} messages in state`)
+      } catch (err) {
+        log('Thread', 'Error fetching thread messages', err)
+      }
+    },
+    [setMessages]
+  )
 
   const handleNewThread = useCallback(() => {
     log('Thread', 'Creating new thread')
