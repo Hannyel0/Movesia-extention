@@ -6,10 +6,16 @@ import { Button } from './lib/components/ui/button'
 import { cn } from './lib/utils'
 import { MarkdownRenderer } from './lib/components/MarkdownRenderer'
 import { ChatInput } from './lib/components/ChatInput'
-import { ThreadSelector, type Thread } from './lib/components/ThreadSelector'
-import { ToolCallList, type ToolCallData, type ToolCallState } from './lib/components/ToolCall'
+import { ThreadSelector } from './lib/components/ThreadSelector'
+import { ToolCallList } from './lib/components/ToolCall'
 
-// Configuration - update this to match your agent server
+// Extracted modules
+import { createUIMessageChunkStream } from './lib/streaming/sseParser'
+import { useToolCalls } from './lib/hooks/useToolCalls'
+import { useThreads } from './lib/hooks/useThreads'
+import type { DisplayMessage } from './lib/types/chat'
+
+// Configuration
 const API_BASE_URL = 'http://127.0.0.1:8765'
 
 // Debug logging helper
@@ -25,21 +31,6 @@ function log(category: string, message: string, data?: unknown) {
   }
 }
 
-// Extended message type with tool calls display
-interface DisplayMessage {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  toolCalls?: ToolCallData[]
-}
-
-// Tool call tracker - stores tool calls for the current streaming session
-// We track by backend message ID, and associate with the latest assistant message
-interface StreamingToolCalls {
-  backendMessageId: string
-  tools: Map<string, ToolCallData>
-}
-
 // Helper function to extract text content from UIMessage parts
 function getMessageTextContent(msg: UIMessage): string {
   if (!msg.parts) return ''
@@ -49,256 +40,22 @@ function getMessageTextContent(msg: UIMessage): string {
     .join('')
 }
 
-// Tool call event types from SSE
-interface ToolCallEvent {
-  type: 'tool-start' | 'tool-input' | 'tool-output' | 'tool-error'
-  toolCallId: string
-  toolName?: string
-  input?: unknown
-  output?: unknown
-  error?: string
-}
-
-type ToolCallEventCallback = (event: ToolCallEvent, messageId: string) => void
-
-// Parse SSE stream and convert to UIMessageChunk stream
-// Also extracts tool call events and forwards them to the callback
-function createUIMessageChunkStream(
-  response: Response,
-  onToolCallEvent?: ToolCallEventCallback
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): ReadableStream<any> {
-  log('SSE', 'Creating UIMessageChunk stream from response')
-  const reader = response.body!.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let chunkCount = 0
-  let currentMessageId = ''
-
-  return new ReadableStream({
-    async pull(controller) {
-      try {
-        const { done, value } = await reader.read()
-
-        if (done) {
-          log('SSE', 'Stream complete (done=true)')
-          controller.close()
-          return
-        }
-
-        const decoded = decoder.decode(value, { stream: true })
-        buffer += decoded
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6).trim()
-            if (data === '[DONE]') {
-              log('SSE', 'Received [DONE] signal')
-              controller.close()
-              return
-            }
-            try {
-              const chunk = JSON.parse(data)
-              chunkCount++
-
-              // Log first few chunks and then every 10th
-              if (chunkCount <= 3 || chunkCount % 10 === 0) {
-                log('SSE', `Chunk #${chunkCount}: type=${chunk.type}`, chunk)
-              }
-
-              // Track message ID from start event
-              if (chunk.type === 'start' && chunk.messageId) {
-                currentMessageId = chunk.messageId
-                log('SSE', `Message started: ${currentMessageId}`)
-              }
-
-              // Extract tool call events and forward to callback
-              if (onToolCallEvent && currentMessageId) {
-                if (chunk.type === 'tool-input-start') {
-                  log('ToolTrack', `Tool start: ${chunk.toolName}`, chunk)
-                  onToolCallEvent({
-                    type: 'tool-start',
-                    toolCallId: chunk.toolCallId,
-                    toolName: chunk.toolName,
-                  }, currentMessageId)
-                } else if (chunk.type === 'tool-input-available') {
-                  log('ToolTrack', `Tool input available: ${chunk.toolName}`, chunk)
-                  onToolCallEvent({
-                    type: 'tool-input',
-                    toolCallId: chunk.toolCallId,
-                    toolName: chunk.toolName,
-                    input: chunk.input,
-                  }, currentMessageId)
-                } else if (chunk.type === 'tool-output-available') {
-                  log('ToolTrack', `Tool output available`, chunk)
-                  onToolCallEvent({
-                    type: 'tool-output',
-                    toolCallId: chunk.toolCallId,
-                    output: chunk.output,
-                  }, currentMessageId)
-                } else if (chunk.type === 'error') {
-                  log('ToolTrack', `Error`, chunk)
-                  // Note: errors might not have toolCallId
-                }
-              }
-
-              controller.enqueue(chunk)
-            } catch (parseErr) {
-              log('SSE', `Failed to parse JSON: "${data.slice(0, 100)}"`, parseErr)
-            }
-          }
-        }
-      } catch (err) {
-        log('SSE', 'Stream error', err)
-        controller.error(err)
-      }
-    },
-    cancel() {
-      log('SSE', 'Stream cancelled')
-      reader.cancel()
-    },
-  })
-}
-
 function ChatView() {
   const [inputValue, setInputValue] = useState('')
-  const [threadId, setThreadId] = useState<string | null>(null)
-  const [threads, setThreads] = useState<Thread[]>([])
-  // Track tool calls for current streaming response
-  const [currentStreamTools, setCurrentStreamTools] = useState<StreamingToolCalls | null>(null)
-  // Track completed tool calls by the index of the assistant message (0-indexed among assistant messages only)
-  const [completedToolCalls, setCompletedToolCalls] = useState<Map<number, ToolCallData[]>>(new Map())
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Ref to always have access to current threadId in transport closure
-  const threadIdRef = useRef<string | null>(null)
-  threadIdRef.current = threadId // Keep ref in sync with state
+  // Placeholder for AI SDK - we need status and messages before we can use the hooks
+  // So we declare the chat hook first, then pass its values to our custom hooks
+  const [chatInitialized, setChatInitialized] = useState(false)
 
-  log('Component', 'ChatView render', { threadId, inputValue: inputValue.slice(0, 20) })
-
-  // Handle tool call events from SSE stream
-  const handleToolCallEvent = useCallback((event: ToolCallEvent, messageId: string) => {
-    log('ToolEvent', `Received: ${event.type} for message ${messageId}`, event)
-
-    setCurrentStreamTools(prev => {
-      // Initialize if needed or if message ID changed
-      const isNewMessage = !prev || prev.backendMessageId !== messageId
-      const tools = isNewMessage ? new Map() : new Map(prev.tools)
-
-      const existingTool = tools.get(event.toolCallId)
-
-      switch (event.type) {
-        case 'tool-start':
-          tools.set(event.toolCallId, {
-            id: event.toolCallId,
-            name: event.toolName || 'unknown',
-            state: 'streaming' as ToolCallState,
-          })
-          break
-
-        case 'tool-input':
-          tools.set(event.toolCallId, {
-            id: event.toolCallId,
-            name: event.toolName || existingTool?.name || 'unknown',
-            state: 'executing' as ToolCallState,
-            input: event.input,
-          })
-          break
-
-        case 'tool-output':
-          if (existingTool) {
-            tools.set(event.toolCallId, {
-              ...existingTool,
-              state: 'completed' as ToolCallState,
-              output: event.output,
-            })
-          } else {
-            // Tool output without prior start/input (shouldn't happen but handle gracefully)
-            tools.set(event.toolCallId, {
-              id: event.toolCallId,
-              name: 'unknown',
-              state: 'completed' as ToolCallState,
-              output: event.output,
-            })
-          }
-          break
-
-        case 'tool-error':
-          if (existingTool) {
-            tools.set(event.toolCallId, {
-              ...existingTool,
-              state: 'error' as ToolCallState,
-              error: event.error,
-            })
-          }
-          break
-      }
-
-      return { backendMessageId: messageId, tools }
-    })
-  }, [])
-
-  // Fetch conversation details from backend and add to threads list
-  const fetchConversationDetails = useCallback(async (id: string) => {
-    log('Thread', `>>> fetchConversationDetails called with id: ${id}`)
-    try {
-      const url = `${API_BASE_URL}/api/conversations/${id}`
-      log('Thread', `Fetching: ${url}`)
-      const response = await fetch(url)
-
-      log('Thread', `Response status: ${response.status}`)
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        log('Thread', `Failed to fetch conversation: ${response.status}`, errorText)
-        return
-      }
-
-      const data = await response.json()
-      log('Thread', 'Conversation details received', data)
-
-      const title = data.conversation?.title || 'New Chat'
-      log('Thread', `Extracted title: "${title}"`)
-
-      // Add the new thread to the list (or update if exists)
-      setThreads(prev => {
-        log('Thread', `setThreads called, prev threads count: ${prev.length}`, prev)
-        const exists = prev.some(t => t.id === id)
-        log('Thread', `Thread ${id} exists: ${exists}`)
-
-        let newThreads: Thread[]
-        if (exists) {
-          newThreads = prev.map(t => (t.id === id ? { ...t, title } : t))
-        } else {
-          newThreads = [
-            {
-              id,
-              title,
-              createdAt: new Date(),
-              messageCount: 1,
-            },
-            ...prev,
-          ]
-        }
-        log('Thread', `New threads count: ${newThreads.length}`, newThreads)
-        return newThreads
-      })
-    } catch (err) {
-      log('Thread', 'Error fetching conversation details', err)
-    }
-  }, [])
+  // We need a ref to store handleToolCallEvent since it's used in the transport
+  // but the transport is defined before we have access to the hook
+  const toolCallEventHandlerRef = useRef<
+    ((event: Parameters<typeof handleToolCallEvent>[0], messageId: string) => void) | null
+  >(null)
 
   // Vercel AI SDK v6 useChat hook with custom transport
-  const {
-    messages,
-    setMessages,
-    status,
-    error,
-    sendMessage,
-    stop,
-  } = useChat({
+  const { messages, setMessages, status, error, sendMessage, stop } = useChat({
     // Custom transport for our Python backend
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     transport: {
@@ -307,7 +64,10 @@ function ChatView() {
         const currentThreadId = threadIdRef.current
 
         log('Transport', '='.repeat(50))
-        log('Transport', 'sendMessages called', { messageCount: chatMessages.length, threadId: currentThreadId })
+        log('Transport', 'sendMessages called', {
+          messageCount: chatMessages.length,
+          threadId: currentThreadId,
+        })
 
         const requestBody = {
           messages: chatMessages.map(msg => ({
@@ -356,81 +116,49 @@ function ChatView() {
           log('Transport', 'Creating SSE stream...')
           // Parse SSE and return UIMessageChunk stream
           // Pass tool call event handler to extract tool calls from stream
-          return createUIMessageChunkStream(response, handleToolCallEvent)
+          return createUIMessageChunkStream(
+            response,
+            toolCallEventHandlerRef.current || undefined
+          )
         } catch (err) {
           log('Transport', 'Fetch error', err)
           throw err
         }
       },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any,
   })
 
-  // Log status changes and save tool calls when streaming ends
-  const prevStatusRef = useRef(status)
-  useEffect(() => {
-    log('Status', `Status changed to: ${status}`)
+  // Now we can use our custom hooks with the AI SDK values
+  const { handleToolCallEvent, clearToolCalls, getToolCallsForMessage } = useToolCalls({
+    status,
+    messages,
+  })
 
-    // When transitioning from streaming to ready, save tool calls
-    if (prevStatusRef.current === 'streaming' && status === 'ready') {
-      if (currentStreamTools && currentStreamTools.tools.size > 0) {
-        // Count assistant messages to get the index
-        const assistantCount = messages.filter(m => m.role === 'assistant').length
-        if (assistantCount > 0) {
-          const assistantIndex = assistantCount - 1
-          const toolsArray = Array.from(currentStreamTools.tools.values())
-          log('Status', `Saving ${toolsArray.length} tool calls for assistant ${assistantIndex}`)
+  // Store the handler in ref for the transport to use
+  toolCallEventHandlerRef.current = handleToolCallEvent
 
-          setCompletedToolCalls(prev => {
-            const newMap = new Map(prev)
-            newMap.set(assistantIndex, toolsArray)
-            return newMap
-          })
-        }
-        // Clear current stream tools
-        setCurrentStreamTools(null)
-      }
-    }
+  // Ref to always have access to current threadId in transport closure
+  const threadIdRef = useRef<string | null>(null)
 
-    prevStatusRef.current = status
-  }, [status, currentStreamTools, messages])
+  const {
+    threadId,
+    setThreadId,
+    threads,
+    handleSelectThread,
+    handleNewThread,
+    handleDeleteThread,
+    fetchConversationDetails,
+  } = useThreads({
+    apiBaseUrl: API_BASE_URL,
+    setMessages,
+    onClearToolCalls: clearToolCalls,
+  })
 
-  // Log threads changes
-  useEffect(() => {
-    log('Threads', `Threads state updated, count: ${threads.length}`, threads)
-  }, [threads])
+  // Keep ref in sync with state
+  threadIdRef.current = threadId
 
-  // Fetch threads from backend on mount
-  useEffect(() => {
-    const fetchThreads = async () => {
-      try {
-        log('Threads', 'Fetching threads from backend...')
-        const response = await fetch(`${API_BASE_URL}/api/conversations`)
-        if (!response.ok) {
-          log('Threads', `Failed to fetch threads: ${response.status}`)
-          return
-        }
-        const data = await response.json()
-        log('Threads', 'Threads fetched from backend', data)
-
-        const loadedThreads: Thread[] = data.conversations.map(
-          (conv: { session_id: string; title: string | null; created_at: string }) => ({
-            id: conv.session_id,
-            title: conv.title || 'New Chat',
-            createdAt: new Date(conv.created_at),
-            messageCount: 0,
-          })
-        )
-
-        setThreads(loadedThreads)
-        log('Threads', `Loaded ${loadedThreads.length} threads from backend`)
-      } catch (err) {
-        log('Threads', 'Error fetching threads', err)
-      }
-    }
-
-    fetchThreads()
-  }, [])
+  log('Component', 'ChatView render', { threadId, inputValue: inputValue.slice(0, 20) })
 
   // Log error changes
   useEffect(() => {
@@ -460,7 +188,10 @@ function ChatView() {
 
   const handleSendMessage = useCallback(async () => {
     if (!inputValue.trim() || isLoading) {
-      log('Send', 'Blocked: empty input or loading', { inputValue: inputValue.trim(), isLoading })
+      log('Send', 'Blocked: empty input or loading', {
+        inputValue: inputValue.trim(),
+        isLoading,
+      })
       return
     }
 
@@ -503,86 +234,8 @@ function ChatView() {
     log('Clear', 'Clearing chat')
     setMessages([])
     setThreadId(null)
-    setCurrentStreamTools(null)
-    setCompletedToolCalls(new Map())
-  }, [setMessages])
-
-  // Thread handlers
-  const handleSelectThread = useCallback(
-    async (id: string) => {
-      log('Thread', `Selected thread: ${id}`)
-      setThreadId(id)
-      // Clear tool call tracking when switching threads
-      setCurrentStreamTools(null)
-      setCompletedToolCalls(new Map())
-
-      // Load messages for this thread from backend
-      try {
-        log('Thread', `Fetching messages for thread: ${id}`)
-        const response = await fetch(`${API_BASE_URL}/api/conversations/${id}/messages`)
-
-        if (!response.ok) {
-          log('Thread', `Failed to fetch messages: ${response.status}`)
-          return
-        }
-
-        const messagesData = await response.json()
-        log('Thread', `Loaded ${messagesData.length} messages`, messagesData)
-
-        // Convert backend messages to UIMessage format for the AI SDK
-        const uiMessages: UIMessage[] = messagesData.map(
-          (msg: { role: string; content: string }, index: number) => ({
-            id: `${id}-${index}`,
-            role: msg.role as 'user' | 'assistant',
-            parts: [{ type: 'text' as const, text: msg.content }],
-          })
-        )
-
-        setMessages(uiMessages)
-        log('Thread', `Set ${uiMessages.length} messages in state`)
-      } catch (err) {
-        log('Thread', 'Error fetching thread messages', err)
-      }
-    },
-    [setMessages]
-  )
-
-  const handleNewThread = useCallback(() => {
-    log('Thread', 'Creating new thread')
-    setThreadId(null)
-    setMessages([])
-    setCurrentStreamTools(null)
-    setCompletedToolCalls(new Map())
-  }, [setMessages])
-
-  const handleDeleteThread = useCallback(
-    async (id: string) => {
-      log('Thread', `Deleting thread: ${id}`)
-
-      // Delete from backend
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/conversations/${id}`, {
-          method: 'DELETE',
-        })
-
-        if (!response.ok) {
-          log('Thread', `Failed to delete thread from backend: ${response.status}`)
-        } else {
-          log('Thread', `Thread deleted from backend: ${id}`)
-        }
-      } catch (err) {
-        log('Thread', 'Error deleting thread from backend', err)
-      }
-
-      // Update local state
-      setThreads(prev => prev.filter(t => t.id !== id))
-      if (threadId === id) {
-        setThreadId(null)
-        setMessages([])
-      }
-    },
-    [threadId, setMessages]
-  )
+    clearToolCalls()
+  }, [setMessages, setThreadId, clearToolCalls])
 
   const handleStop = useCallback(() => {
     log('Stop', 'Stopping generation')
@@ -590,14 +243,10 @@ function ChatView() {
   }, [stop])
 
   // Convert AI SDK v6 UIMessage to display format
-  // Use our independently tracked tool calls instead of AI SDK parts
   const displayMessages: DisplayMessage[] = messages.map((msg, index) => {
-    // Extract text content from parts
     const textContent = getMessageTextContent(msg)
 
-    // For assistant messages, check if this is the last one (currently streaming)
-    // and attach our tracked tool calls
-    let toolCallArray: ToolCallData[] = []
+    let toolCallArray: DisplayMessage['toolCalls'] = []
 
     if (msg.role === 'assistant') {
       // Count assistant messages to get the index
@@ -605,24 +254,10 @@ function ChatView() {
         .slice(0, index + 1)
         .filter(m => m.role === 'assistant').length - 1
 
-      // Check if this is the last assistant message and we have streaming tools
-      const isLastAssistant = messages
-        .slice(index + 1)
-        .every(m => m.role !== 'assistant')
+      // Check if this is the last assistant message
+      const isLastAssistant = messages.slice(index + 1).every(m => m.role !== 'assistant')
 
-      if (isLastAssistant && currentStreamTools && currentStreamTools.tools.size > 0) {
-        // This is the streaming message - use current stream tools
-        toolCallArray = Array.from(currentStreamTools.tools.values())
-        log('DisplayMsg', `Using stream tools for assistant ${assistantIndex}`, {
-          count: toolCallArray.length,
-        })
-      } else {
-        // Check completed tool calls
-        const completed = completedToolCalls.get(assistantIndex)
-        if (completed) {
-          toolCallArray = completed
-        }
-      }
+      toolCallArray = getToolCallsForMessage(assistantIndex, isLastAssistant)
     }
 
     return {
@@ -721,7 +356,6 @@ const ChatMessage = memo(function ChatMessage({ message }: ChatMessageProps) {
     </div>
   )
 })
-
 
 interface EmptyStateProps {
   onSuggestionClick: (text: string) => void
