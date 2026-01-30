@@ -6,7 +6,7 @@ REST API endpoints for chat history.
 """
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
@@ -38,10 +38,19 @@ class ConversationResponse(BaseModel):
         from_attributes = True
 
 
+class ToolCallResponse(BaseModel):
+    """Response model for a tool call."""
+    id: str
+    name: str
+    input: Optional[Dict[str, Any]] = None
+    output: Optional[Any] = None
+
+
 class MessageResponse(BaseModel):
     """Response model for a message (from LangGraph state)."""
     role: str
     content: str
+    tool_calls: Optional[List[ToolCallResponse]] = None
 
 
 class ConversationDetailResponse(BaseModel):
@@ -175,6 +184,7 @@ async def _get_messages_from_checkpoint(session_id: str) -> List[MessageResponse
     Retrieve messages from LangGraph's checkpoint state.
 
     The checkpoint stores the full graph state including messages.
+    Tool calls are extracted from AIMessage and paired with ToolMessage outputs.
     """
     try:
         checkpointer = get_checkpoint_saver()
@@ -191,6 +201,16 @@ async def _get_messages_from_checkpoint(session_id: str) -> List[MessageResponse
         channel_values = checkpoint.get("channel_values", {})
         messages_data = channel_values.get("messages", [])
 
+        # First pass: collect tool outputs from ToolMessages
+        # Map tool_call_id -> output content
+        tool_outputs: Dict[str, Any] = {}
+        for msg in messages_data:
+            if hasattr(msg, "type") and msg.type == "tool":
+                # ToolMessage has tool_call_id and content (the output)
+                tool_call_id = getattr(msg, "tool_call_id", None)
+                if tool_call_id:
+                    tool_outputs[tool_call_id] = msg.content
+
         messages = []
         for msg in messages_data:
             # Messages can be tuples like ("human", "content") or message objects
@@ -203,17 +223,59 @@ async def _get_messages_from_checkpoint(session_id: str) -> List[MessageResponse
             elif hasattr(msg, "type") and hasattr(msg, "content"):
                 # LangChain message objects
                 role = msg.type
+
+                # Skip tool messages - they're paired with AIMessage tool_calls
+                if role == "tool":
+                    continue
+
                 if role == "human":
                     role = "user"
                 elif role == "ai":
                     role = "assistant"
+
+                # Extract text content (avoid stringifying tool call data)
+                content = msg.content
+                if isinstance(content, list):
+                    # Content can be a list of blocks, extract text only
+                    text_parts = []
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text_parts.append(block.get("text", ""))
+                        elif isinstance(block, str):
+                            text_parts.append(block)
+                    content = "".join(text_parts)
+                elif not isinstance(content, str):
+                    content = str(content) if content else ""
+
+                # Extract tool calls from AIMessage
+                tool_calls_response = None
+                if role == "assistant" and hasattr(msg, "tool_calls") and msg.tool_calls:
+                    tool_calls_response = []
+                    for tc in msg.tool_calls:
+                        tc_id = tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", "")
+                        tc_name = tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", "")
+                        tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+
+                        # Get the output from our collected tool outputs
+                        tc_output = tool_outputs.get(tc_id)
+
+                        tool_calls_response.append(ToolCallResponse(
+                            id=tc_id,
+                            name=tc_name,
+                            input=tc_args if isinstance(tc_args, dict) else {},
+                            output=tc_output
+                        ))
+
                 messages.append(MessageResponse(
                     role=role,
-                    content=str(msg.content)
+                    content=content,
+                    tool_calls=tool_calls_response
                 ))
 
         return messages
 
     except Exception as e:
         logger.error(f"Failed to get messages from checkpoint: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return []

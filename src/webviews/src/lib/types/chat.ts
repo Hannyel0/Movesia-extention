@@ -1,4 +1,4 @@
-import type { ToolCallData } from '../components/ToolCall'
+import type { ToolCallData } from '../components/tools'
 
 // Extended message type with tool calls display
 export interface DisplayMessage {

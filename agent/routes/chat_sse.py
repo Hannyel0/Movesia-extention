@@ -243,8 +243,9 @@ async def stream_agent_sse(
                 logger.info(f"[TOOL] END: {tool_name} | id={tool_call_id[:12]}...")
                 logger.info(f"[TOOL] OUTPUT: {str(tool_output)[:150]}...")
 
-                # Send tool result
-                truncated_output = truncate_output(tool_output, max_length=2000)
+                # Send tool result - use larger limit to avoid truncating valid JSON
+                # The UI components handle overflow/scrolling for large outputs
+                truncated_output = truncate_output(tool_output, max_length=50000)
                 yield protocol.tool_output_available(tool_call_id, truncated_output)
 
                 # Remove from tracking

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import type { ToolCallData, ToolCallState } from '../components/ToolCall'
+import type { ToolCallData, ToolCallState } from '../components/tools'
 import type { ToolCallEvent, StreamingToolCalls } from '../types/chat'
 
 // Debug logging helper
@@ -31,6 +31,8 @@ interface UseToolCallsReturn {
   handleToolCallEvent: (event: ToolCallEvent, messageId: string) => void
   /** Clear all tool call state */
   clearToolCalls: () => void
+  /** Load tool calls from persistence (when loading old threads) */
+  loadToolCalls: (toolCallsMap: Map<number, ToolCallData[]>) => void
   /** Get tool calls for a specific assistant message */
   getToolCallsForMessage: (
     messageIndex: number,
@@ -168,6 +170,12 @@ export function useToolCalls({
     setCompletedToolCalls(new Map())
   }, [])
 
+  // Load tool calls from persistence (when loading old threads)
+  const loadToolCalls = useCallback((toolCallsMap: Map<number, ToolCallData[]>) => {
+    log('ToolCalls', `Loading ${toolCallsMap.size} tool call entries from persistence`)
+    setCompletedToolCalls(toolCallsMap)
+  }, [])
+
   // Get tool calls for a specific assistant message
   const getToolCallsForMessage = useCallback(
     (assistantIndex: number, isLastAssistant: boolean): ToolCallData[] => {
@@ -192,6 +200,7 @@ export function useToolCalls({
     completedToolCalls,
     handleToolCallEvent,
     clearToolCalls,
+    loadToolCalls,
     getToolCallsForMessage,
   }
 }

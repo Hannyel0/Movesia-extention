@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import type { Thread } from '../components/ThreadSelector'
 import type { UIMessage } from 'ai'
+import type { ToolCallData } from '../components/ToolCall'
 
 // Debug logging helper
 const DEBUG = true
@@ -15,6 +16,20 @@ function log(category: string, message: string, data?: unknown) {
   }
 }
 
+// API response types
+interface ToolCallApiResponse {
+  id: string
+  name: string
+  input?: Record<string, unknown>
+  output?: unknown
+}
+
+interface MessageApiResponse {
+  role: string
+  content: string
+  tool_calls?: ToolCallApiResponse[]
+}
+
 interface UseThreadsOptions {
   /** Base URL for the API */
   apiBaseUrl: string
@@ -22,6 +37,8 @@ interface UseThreadsOptions {
   setMessages: (messages: UIMessage[]) => void
   /** Callback when tool calls should be cleared */
   onClearToolCalls?: () => void
+  /** Callback to load tool calls from persistence */
+  onLoadToolCalls?: (toolCallsMap: Map<number, ToolCallData[]>) => void
 }
 
 interface UseThreadsReturn {
@@ -55,6 +72,7 @@ export function useThreads({
   apiBaseUrl,
   setMessages,
   onClearToolCalls,
+  onLoadToolCalls,
 }: UseThreadsOptions): UseThreadsReturn {
   const [threadId, setThreadId] = useState<string | null>(null)
   const [threads, setThreads] = useState<Thread[]>([])
@@ -167,17 +185,45 @@ export function useThreads({
           return
         }
 
-        const messagesData = await response.json()
+        const messagesData: MessageApiResponse[] = await response.json()
         log('Thread', `Loaded ${messagesData.length} messages`, messagesData)
 
         // Convert backend messages to UIMessage format for the AI SDK
-        const uiMessages: UIMessage[] = messagesData.map(
-          (msg: { role: string; content: string }, index: number) => ({
+        // Also extract tool calls to populate the completedToolCalls map
+        const toolCallsMap = new Map<number, ToolCallData[]>()
+        let assistantIndex = 0
+
+        const uiMessages: UIMessage[] = messagesData.map((msg, index) => {
+          // If this is an assistant message with tool calls, extract them
+          if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+            const toolCalls: ToolCallData[] = msg.tool_calls.map(tc => ({
+              id: tc.id,
+              name: tc.name,
+              state: 'completed' as const,
+              input: tc.input,
+              output: tc.output,
+            }))
+            toolCallsMap.set(assistantIndex, toolCalls)
+            log('Thread', `Extracted ${toolCalls.length} tool calls for assistant message ${assistantIndex}`, toolCalls)
+          }
+
+          // Increment assistant index after processing
+          if (msg.role === 'assistant') {
+            assistantIndex++
+          }
+
+          return {
             id: `${id}-${index}`,
             role: msg.role as 'user' | 'assistant',
             parts: [{ type: 'text' as const, text: msg.content }],
-          })
-        )
+          }
+        })
+
+        // Load tool calls into the hook state
+        if (toolCallsMap.size > 0 && onLoadToolCalls) {
+          log('Thread', `Loading ${toolCallsMap.size} tool call entries into state`)
+          onLoadToolCalls(toolCallsMap)
+        }
 
         setMessages(uiMessages)
         log('Thread', `Set ${uiMessages.length} messages in state`)
@@ -185,7 +231,7 @@ export function useThreads({
         log('Thread', 'Error fetching thread messages', err)
       }
     },
-    [apiBaseUrl, setMessages, onClearToolCalls]
+    [apiBaseUrl, setMessages, onClearToolCalls, onLoadToolCalls]
   )
 
   // Handle creating a new thread

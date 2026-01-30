@@ -7,13 +7,16 @@ import { cn } from './lib/utils'
 import { MarkdownRenderer } from './lib/components/MarkdownRenderer'
 import { ChatInput } from './lib/components/ChatInput'
 import { ThreadSelector } from './lib/components/ThreadSelector'
-import { ToolCallList } from './lib/components/ToolCall'
+import { ToolCallList, ensureCustomToolUIsRegistered } from './lib/components/tools'
 
 // Extracted modules
 import { createUIMessageChunkStream } from './lib/streaming/sseParser'
 import { useToolCalls } from './lib/hooks/useToolCalls'
 import { useThreads } from './lib/hooks/useThreads'
 import type { DisplayMessage } from './lib/types/chat'
+
+// Initialize custom tool UIs on module load
+ensureCustomToolUIsRegistered()
 
 // Configuration
 const API_BASE_URL = 'http://127.0.0.1:8765'
@@ -130,7 +133,7 @@ function ChatView() {
   })
 
   // Now we can use our custom hooks with the AI SDK values
-  const { handleToolCallEvent, clearToolCalls, getToolCallsForMessage } = useToolCalls({
+  const { handleToolCallEvent, clearToolCalls, loadToolCalls, getToolCallsForMessage } = useToolCalls({
     status,
     messages,
   })
@@ -153,6 +156,7 @@ function ChatView() {
     apiBaseUrl: API_BASE_URL,
     setMessages,
     onClearToolCalls: clearToolCalls,
+    onLoadToolCalls: loadToolCalls,
   })
 
   // Keep ref in sync with state

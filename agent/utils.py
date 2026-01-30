@@ -19,11 +19,21 @@ def safe_serialize(obj) -> dict:
 
 
 def truncate_output(output, max_length: int = 1000) -> str:
-    """Truncate large outputs for sending to client."""
+    """Truncate large outputs for sending to client.
+
+    Handles LangChain message objects (like ToolMessage) by extracting
+    their .content attribute instead of using __repr__().
+    """
     if output is None:
         return ""
 
-    output_str = str(output)
+    # Extract content from LangChain message objects (ToolMessage, etc.)
+    # These have a .content attribute with the actual data
+    if hasattr(output, 'content'):
+        output_str = str(output.content)
+    else:
+        output_str = str(output)
+
     if len(output_str) > max_length:
         return output_str[:max_length] + f"... (truncated, {len(output_str)} total chars)"
     return output_str
