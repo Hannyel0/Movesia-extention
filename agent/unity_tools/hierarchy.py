@@ -66,7 +66,7 @@ async def _unity_hierarchy(
         if name:
             params["name"] = name
         if primitive_type:
-            params["primitiveType"] = primitive_type
+            params["primitive"] = primitive_type
         if parent_id is not None:
             params["parentInstanceId"] = parent_id
         if position:
