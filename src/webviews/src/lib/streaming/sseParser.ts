@@ -34,6 +34,8 @@ export function createUIMessageChunkStream(
   let buffer = ''
   let chunkCount = 0
   let currentMessageId = ''
+  // Track accumulated text length for tool position tracking
+  let accumulatedTextLength = 0
 
   return new ReadableStream({
     async pull(controller) {
@@ -68,42 +70,51 @@ export function createUIMessageChunkStream(
                 log('SSE', `Chunk #${chunkCount}: type=${chunk.type}`, chunk)
               }
 
-              // Track message ID from start event
+              // Track message ID from start event and reset text accumulator
               if (chunk.type === 'start' && chunk.messageId) {
                 currentMessageId = chunk.messageId
+                accumulatedTextLength = 0 // Reset for new message
                 log('SSE', `Message started: ${currentMessageId}`)
               }
 
-              // Extract tool call events and forward to callback
+              // Track text accumulation for position tracking
+              if (chunk.type === 'text-delta' && chunk.delta) {
+                accumulatedTextLength += chunk.delta.length
+              }
+
+              // Extract tool call events and forward to callback with position info
               if (onToolCallEvent && currentMessageId) {
                 if (chunk.type === 'tool-input-start') {
-                  log('ToolTrack', `Tool start: ${chunk.toolName}`, chunk)
+                  log('ToolTrack', `Tool start: ${chunk.toolName} at position ${accumulatedTextLength}`, chunk)
                   onToolCallEvent(
                     {
                       type: 'tool-start',
                       toolCallId: chunk.toolCallId,
                       toolName: chunk.toolName,
+                      textLengthAtEvent: accumulatedTextLength,
                     },
                     currentMessageId
                   )
                 } else if (chunk.type === 'tool-input-available') {
-                  log('ToolTrack', `Tool input available: ${chunk.toolName}`, chunk)
+                  log('ToolTrack', `Tool input available: ${chunk.toolName} at position ${accumulatedTextLength}`, chunk)
                   onToolCallEvent(
                     {
                       type: 'tool-input',
                       toolCallId: chunk.toolCallId,
                       toolName: chunk.toolName,
                       input: chunk.input,
+                      textLengthAtEvent: accumulatedTextLength,
                     },
                     currentMessageId
                   )
                 } else if (chunk.type === 'tool-output-available') {
-                  log('ToolTrack', `Tool output available`, chunk)
+                  log('ToolTrack', `Tool output available at position ${accumulatedTextLength}`, chunk)
                   onToolCallEvent(
                     {
                       type: 'tool-output',
                       toolCallId: chunk.toolCallId,
                       output: chunk.output,
+                      textLengthAtEvent: accumulatedTextLength,
                     },
                     currentMessageId
                   )

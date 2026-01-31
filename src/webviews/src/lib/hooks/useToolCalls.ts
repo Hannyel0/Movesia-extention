@@ -86,6 +86,7 @@ export function useToolCalls({
               id: event.toolCallId,
               name: event.toolName || 'unknown',
               state: 'streaming' as ToolCallState,
+              textOffsetStart: event.textLengthAtEvent,
             })
             break
 
@@ -95,6 +96,8 @@ export function useToolCalls({
               name: event.toolName || existingTool?.name || 'unknown',
               state: 'executing' as ToolCallState,
               input: event.input,
+              // Preserve start position from tool-start, or use current if not available
+              textOffsetStart: existingTool?.textOffsetStart ?? event.textLengthAtEvent,
             })
             break
 
@@ -104,6 +107,7 @@ export function useToolCalls({
                 ...existingTool,
                 state: 'completed' as ToolCallState,
                 output: event.output,
+                textOffsetEnd: event.textLengthAtEvent,
               })
             } else {
               // Tool output without prior start/input (shouldn't happen but handle gracefully)
@@ -112,6 +116,7 @@ export function useToolCalls({
                 name: 'unknown',
                 state: 'completed' as ToolCallState,
                 output: event.output,
+                textOffsetEnd: event.textLengthAtEvent,
               })
             }
             break
@@ -122,6 +127,7 @@ export function useToolCalls({
                 ...existingTool,
                 state: 'error' as ToolCallState,
                 error: event.error,
+                textOffsetEnd: event.textLengthAtEvent,
               })
             }
             break

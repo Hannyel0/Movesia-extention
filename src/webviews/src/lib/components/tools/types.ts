@@ -32,6 +32,10 @@ export interface ToolCallData {
   output?: unknown
   /** Error message if state is 'error' */
   error?: string
+  /** Character offset in message text where tool started (for interleaved rendering) */
+  textOffsetStart?: number
+  /** Character offset in message text where tool completed (for interleaved rendering) */
+  textOffsetEnd?: number
 }
 
 // =============================================================================

@@ -7,13 +7,14 @@ import { cn } from './lib/utils'
 import { MarkdownRenderer } from './lib/components/MarkdownRenderer'
 import { ChatInput } from './lib/components/ChatInput'
 import { ThreadSelector } from './lib/components/ThreadSelector'
-import { ToolCallList, ensureCustomToolUIsRegistered } from './lib/components/tools'
+import { ToolCallList, ToolUIWrapper, ensureCustomToolUIsRegistered } from './lib/components/tools'
 
 // Extracted modules
 import { createUIMessageChunkStream } from './lib/streaming/sseParser'
 import { useToolCalls } from './lib/hooks/useToolCalls'
 import { useThreads } from './lib/hooks/useThreads'
-import type { DisplayMessage } from './lib/types/chat'
+import { generateMessageSegments } from './lib/utils/messageSegments'
+import type { DisplayMessage, MessageSegment } from './lib/types/chat'
 
 // Initialize custom tool UIs on module load
 ensureCustomToolUIsRegistered()
@@ -246,11 +247,12 @@ function ChatView() {
     stop()
   }, [stop])
 
-  // Convert AI SDK v6 UIMessage to display format
+  // Convert AI SDK v6 UIMessage to display format with interleaved segments
   const displayMessages: DisplayMessage[] = messages.map((msg, index) => {
     const textContent = getMessageTextContent(msg)
 
     let toolCallArray: DisplayMessage['toolCalls'] = []
+    let segments: MessageSegment[] | undefined
 
     if (msg.role === 'assistant') {
       // Count assistant messages to get the index
@@ -262,6 +264,11 @@ function ChatView() {
       const isLastAssistant = messages.slice(index + 1).every(m => m.role !== 'assistant')
 
       toolCallArray = getToolCallsForMessage(assistantIndex, isLastAssistant)
+
+      // Generate interleaved segments for rendering
+      if (toolCallArray.length > 0 || textContent) {
+        segments = generateMessageSegments(textContent, toolCallArray)
+      }
     }
 
     return {
@@ -269,6 +276,7 @@ function ChatView() {
       role: msg.role as 'user' | 'assistant',
       content: textContent,
       toolCalls: toolCallArray.length > 0 ? toolCallArray : undefined,
+      segments,
     }
   })
 
@@ -349,12 +357,26 @@ const ChatMessage = memo(function ChatMessage({ message }: ChatMessageProps) {
         </div>
       ) : (
         <div className="text-left">
-          {/* Tool calls display - using new component */}
-          {message.toolCalls && message.toolCalls.length > 0 && (
-            <ToolCallList tools={message.toolCalls} />
+          {/* Render interleaved segments (text and tools in order) */}
+          {message.segments && message.segments.length > 0 ? (
+            message.segments.map((segment, idx) =>
+              segment.type === 'text' ? (
+                <MarkdownRenderer key={`text-${idx}`} content={segment.content} />
+              ) : (
+                <div key={`tool-${segment.tool.id}`} className="my-2">
+                  <ToolUIWrapper tool={segment.tool} />
+                </div>
+              )
+            )
+          ) : (
+            // Fallback for messages without segments (backward compatibility)
+            <>
+              {message.toolCalls && message.toolCalls.length > 0 && (
+                <ToolCallList tools={message.toolCalls} />
+              )}
+              {message.content && <MarkdownRenderer content={message.content} />}
+            </>
           )}
-          {/* Main content */}
-          {message.content && <MarkdownRenderer content={message.content} />}
         </div>
       )}
     </div>
