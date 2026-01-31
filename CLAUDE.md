@@ -90,9 +90,43 @@ Two patterns available:
 | `ChatView` | `ChatView.tsx` | Main chat interface with message history |
 | `ChatInput` | `lib/components/ChatInput.tsx` | Input bar with action buttons |
 | `MarkdownRenderer` | `lib/components/MarkdownRenderer.tsx` | GFM + syntax highlighting (C# support) |
+| `ThreadSelector` | `lib/components/ThreadSelector.tsx` | Dropdown for managing conversation threads |
+| `UnityStatusIndicator` | `lib/components/UnityStatusIndicator.tsx` | Unity connection status with logo + colored dot |
 | `FieldWithDescription` | `lib/components/FieldWithDescription.tsx` | Settings field wrapper |
 | `Toggle` | `lib/components/Toggle.tsx` | Checkbox with label |
-| UI primitives | `lib/components/ui/` | Button, Avatar, Input, ScrollArea (Radix-based) |
+| UI primitives | `lib/components/ui/` | Button, Avatar, Input, ScrollArea, DropdownMenu, Collapsible (Radix-based) |
+
+### Pluggable Tool UI System
+
+Located in `lib/components/tools/`. Provides extensible rendering for agent tool calls.
+
+**Architecture**:
+- `types.ts` - Core interfaces (`ToolUIProps`, `ToolCallData`, `ToolCallState`)
+- `registry.ts` - Tool registration and lookup
+- `DefaultToolUI.tsx` - Fallback JSON display for unregistered tools
+- `ToolUIWrapper.tsx` - Collapsible wrapper with header/status
+- `custom/` - Custom tool UI implementations
+
+**Registering a custom tool UI**:
+```tsx
+import { registerToolUI } from './tools'
+
+registerToolUI('my_tool', {
+  config: { displayName: 'My Tool', color: 'text-pink-400' },
+  component: MyToolComponent,
+})
+```
+
+**Built-in custom UIs**: `UnityQueryUI`, `UnityHierarchyUI`, `UnityRefreshUI`
+
+### Custom Hooks
+
+| Hook | File | Purpose |
+|------|------|---------|
+| `useToolCalls` | `lib/hooks/useToolCalls.ts` | Tracks tool call state through streaming lifecycle |
+| `useThreads` | `lib/hooks/useThreads.ts` | Thread/conversation management with backend persistence |
+| `useUnityStatus` | `lib/hooks/useUnityStatus.ts` | Polls Unity connection status from backend |
+| `useVSCodeState` | `lib/state/reactState.tsx` | Persists state to VS Code storage API |
 
 ### Chat Interface Features
 
@@ -102,7 +136,9 @@ Two patterns available:
 - Loading state with spinner
 - Markdown rendering with Prism syntax highlighting
 - Code blocks with language label and copy button
-- Test message system for development (`testMessages.ts`)
+- Interleaved tool call rendering (tools appear inline with text at correct positions)
+- Thread management (create, select, delete conversations)
+- Unity connection status indicator (green/yellow/red)
 
 ---
 
@@ -120,10 +156,16 @@ FastAPI server with global managers:
 
 **Endpoints**:
 ```
-GET  /health                    → {"status": "healthy", "unity_connected": bool}
-GET  /status                    → Full server/Unity/chat status
-WS   /ws/chat/{session_id}      → VS Code chat connection
-WS   /ws/unity                  → Unity Editor connection
+GET  /health                              → {"status": "healthy", "unity_connected": bool}
+GET  /status                              → Full server/Unity/chat status
+GET  /unity/status                        → Unity connection state for UI indicator
+POST /api/chat                            → SSE streaming chat endpoint
+GET  /api/conversations                   → List all conversations
+GET  /api/conversations/{id}              → Get conversation details
+GET  /api/conversations/{id}/messages     → Get conversation messages with tool calls
+DELETE /api/conversations/{id}            → Delete conversation
+WS   /ws/chat/{session_id}                → VS Code chat connection (legacy)
+WS   /ws/unity                            → Unity Editor connection
 ```
 
 ### Agent Setup
@@ -162,14 +204,21 @@ model = ChatOpenAI(
 connected       → Initial connection
 thinking        → Agent started
 token           → LLM streaming chunk
-tool_start      → Tool execution began
-tool_end        → Tool finished
+tool_start      → Tool execution began (includes textLengthAtEvent for position)
+tool_input      → Tool input captured
+tool_output     → Tool result received
 tool_error      → Tool failed
 waiting         → Waiting on interrupt
 interrupt_resolved → Interrupt completed
 complete        → Agent finished
 error           → Error occurred
 ```
+
+**Tool Call Lifecycle**:
+1. `tool_start` → state: `streaming` (captures text position)
+2. `tool_input` → state: `executing` (input available)
+3. `tool_output` → state: `completed` (output available)
+4. `tool_error` → state: `error`
 
 ### Unity Connection
 
@@ -270,9 +319,28 @@ src/
     │       ├── components/   # UI components
     │       │   ├── ChatInput.tsx
     │       │   ├── MarkdownRenderer.tsx
+    │       │   ├── ThreadSelector.tsx
+    │       │   ├── UnityStatusIndicator.tsx
     │       │   ├── FieldWithDescription.tsx
     │       │   ├── Toggle.tsx
+    │       │   ├── tools/    # Pluggable tool UI system
+    │       │   │   ├── index.ts          # Public exports
+    │       │   │   ├── types.ts          # ToolCallData, ToolUIProps interfaces
+    │       │   │   ├── registry.ts       # Tool registration/lookup
+    │       │   │   ├── DefaultToolUI.tsx # Fallback JSON display
+    │       │   │   ├── ToolUIWrapper.tsx # Collapsible wrapper
+    │       │   │   └── custom/           # Unity tool UIs
     │       │   └── ui/       # Radix-based primitives
+    │       ├── hooks/
+    │       │   ├── useToolCalls.ts   # Tool call state management
+    │       │   ├── useThreads.ts     # Conversation thread management
+    │       │   └── useUnityStatus.ts # Unity connection polling
+    │       ├── streaming/
+    │       │   └── sseParser.ts      # SSE stream parsing for AI SDK
+    │       ├── types/
+    │       │   └── chat.ts           # DisplayMessage, ToolCallEvent types
+    │       ├── utils/
+    │       │   └── messageSegments.ts # Interleaved text/tool rendering
     │       ├── state/
     │       │   ├── reactState.tsx    # useVSCodeState hook
     │       │   └── zustandState.tsx  # Zustand + VS Code storage
@@ -352,6 +420,9 @@ LANGSMITH_PROJECT=your-project
 - **VS Code theme integration**: Tailwind classes map to CSS variables (`bg-vscode-editor-background`)
 - **Monotonic takeover**: Higher `conn_seq` supersedes older Unity connections
 - **Tool HTTP bridge**: Unity tools use HTTP (port 8766), not WebSocket, for sync calls
+- **Interleaved tool rendering**: Tool calls appear inline with text at their invocation position using `textLengthAtEvent` markers
+- **SSE streaming**: Chat uses HTTP POST with SSE response (not WebSocket) via Vercel AI SDK v6 custom transport
+- **Pluggable tool UIs**: Register custom React components per tool name for rich rendering
 
 ## Dependencies
 
@@ -361,6 +432,8 @@ LANGSMITH_PROJECT=your-project
 |---------|---------|---------|
 | `react` | 19.2.4 | UI framework with automatic JSX transform |
 | `react-router-dom` | 6.30.3 | MemoryRouter for webview routing |
+| `@ai-sdk/react` | latest | Vercel AI SDK v6 `useChat` hook |
+| `ai` | latest | AI SDK core types (`UIMessage`) |
 | `zustand` | 5.0.10 | Lightweight state management |
 | `react-markdown` | 10.1.0 | Markdown parsing |
 | `remark-gfm` | 4.0.1 | GitHub Flavored Markdown |

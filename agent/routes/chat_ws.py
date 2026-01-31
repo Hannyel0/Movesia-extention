@@ -1,5 +1,12 @@
 """
-Chat WebSocket endpoint - VS Code extension connects here.
+##############################################################################
+#                                                                            #
+#                         ⚠️  DEPRECATED - DO NOT USE  ⚠️                    #
+#                                                                            #
+#  This module is no longer used and is kept only for reference.             #
+#  Chat WebSocket handling has been moved elsewhere.                         #
+#                                                                            #
+##############################################################################
 """
 
 import logging

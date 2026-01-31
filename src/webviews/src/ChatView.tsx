@@ -7,6 +7,7 @@ import { cn } from './lib/utils'
 import { MarkdownRenderer } from './lib/components/MarkdownRenderer'
 import { ChatInput } from './lib/components/ChatInput'
 import { ThreadSelector } from './lib/components/ThreadSelector'
+import { UnityStatusIndicator } from './lib/components/UnityStatusIndicator'
 import {
   ToolCallList,
   ToolUIWrapper,
@@ -291,13 +292,16 @@ function ChatView() {
     <div className="flex flex-col h-screen overflow-hidden bg-background text-foreground">
       {/* Header */}
       <header className="flex items-center justify-between px-3 py-2 border-b border-border">
-        <ThreadSelector
-          threads={threads}
-          currentThreadId={threadId}
-          onSelectThread={handleSelectThread}
-          onNewThread={handleNewThread}
-          onDeleteThread={handleDeleteThread}
-        />
+        <div className="flex items-center gap-1">
+          <UnityStatusIndicator apiBaseUrl={API_BASE_URL} />
+          <ThreadSelector
+            threads={threads}
+            currentThreadId={threadId}
+            onSelectThread={handleSelectThread}
+            onNewThread={handleNewThread}
+            onDeleteThread={handleDeleteThread}
+          />
+        </div>
         <Button variant="ghost" size="icon" onClick={clearChat} title="Settings">
           <Settings className="w-4 h-4" />
         </Button>
