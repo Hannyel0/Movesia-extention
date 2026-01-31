@@ -131,53 +131,28 @@ class UnityManager:
         """
         # Accept the WebSocket connection
         await websocket.accept()
-        
+
         # Generate connection ID
         cid = self._generate_cid()
-        
-        # Wait for handshake with project info
-        project_path = None
-        unity_version = None
-        
-        try:
-            handshake = await asyncio.wait_for(
-                websocket.receive_json(),
-                timeout=self.config.handshake_timeout
-            )
-            
-            project_path = handshake.get("project_path")
-            unity_version = handshake.get("unity_version")
-            session_id = handshake.get("session_id", session_id)
-            conn_seq = handshake.get("conn_seq", conn_seq)
-            
-            short_session = session_id[:8] if session_id else "none"
-            logger.info(f"Handshake [{cid}] project={project_path or 'unknown'} session={short_session}")
-            
-        except asyncio.TimeoutError:
-            logger.warning(f"Handshake timeout from [{cid}], continuing without project info")
-        except Exception as e:
-            logger.warning(f"Handshake error from [{cid}]: {e}")
-        
-        # Generate session if not provided
+
+        # Session and conn_seq come from URL query params (no handshake needed)
+        # Project path and unity version can be sent later via "hello" message if needed
         if not session_id:
-            session_id = project_path or str(uuid.uuid4())
+            session_id = str(uuid.uuid4())
         
         # Create connection metadata
         connection = ExtendedConnection(
             cid=cid,
             session=session_id,
-            project_path=project_path,
             conn_seq=conn_seq,
-            unity_version=unity_version
         )
-        
+
         # Try to accept the session
         decision = await self._sessions.accept(
             session_id=session_id,
             conn_seq=conn_seq,
             connection=connection,
             websocket=websocket,
-            project_path=project_path
         )
         
         if not decision.accept:

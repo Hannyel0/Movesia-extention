@@ -7,7 +7,14 @@ import { cn } from './lib/utils'
 import { MarkdownRenderer } from './lib/components/MarkdownRenderer'
 import { ChatInput } from './lib/components/ChatInput'
 import { ThreadSelector } from './lib/components/ThreadSelector'
-import { ToolCallList, ToolUIWrapper, ensureCustomToolUIsRegistered } from './lib/components/tools'
+import {
+  ToolCallList,
+  ToolUIWrapper,
+  ensureCustomToolUIsRegistered,
+  getToolRegistration,
+  getToolUIComponent,
+} from './lib/components/tools'
+import type { ToolUIProps } from './lib/components/tools'
 
 // Extracted modules
 import { createUIMessageChunkStream } from './lib/streaming/sseParser'
@@ -345,6 +352,35 @@ interface ChatMessageProps {
   message: DisplayMessage
 }
 
+/**
+ * Renders a tool call UI, checking if it should use full custom mode.
+ *
+ * Full custom mode (fullCustom: true in registration) renders the component
+ * directly without the standard ToolUIWrapper, giving complete control over
+ * the visual presentation.
+ */
+function ToolRenderer({ tool }: { tool: import('./lib/components/tools').ToolCallData }) {
+  const registration = getToolRegistration(tool.name)
+  const CustomComponent = getToolUIComponent(tool.name)
+
+  // Full custom mode: render component directly, no wrapper
+  if (registration?.fullCustom && CustomComponent) {
+    const isActive = tool.state === 'streaming' || tool.state === 'executing'
+    const props: ToolUIProps = {
+      tool,
+      input: tool.input,
+      output: tool.output,
+      isExpanded: true,
+      onToggleExpand: () => {},
+      isActive,
+    }
+    return <CustomComponent {...props} />
+  }
+
+  // Standard mode: use wrapper with collapsible header
+  return <ToolUIWrapper tool={tool} />
+}
+
 // Memoized to prevent re-renders when typing in input
 const ChatMessage = memo(function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === 'user'
@@ -364,7 +400,7 @@ const ChatMessage = memo(function ChatMessage({ message }: ChatMessageProps) {
                 <MarkdownRenderer key={`text-${idx}`} content={segment.content} />
               ) : (
                 <div key={`tool-${segment.tool.id}`} className="my-2">
-                  <ToolUIWrapper tool={segment.tool} />
+                  <ToolRenderer tool={segment.tool} />
                 </div>
               )
             )

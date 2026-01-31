@@ -98,6 +98,19 @@ export interface ToolRegistration<TInput = unknown, TOutput = unknown> {
   config: ToolConfig
   /** Custom UI component (optional - falls back to default) */
   component?: ToolUIComponent<TInput, TOutput>
+  /**
+   * When true, the component is rendered directly without the standard wrapper.
+   *
+   * Full custom mode bypasses the ToolUIWrapper entirely, meaning:
+   * - No collapsible header with tool name and chevron
+   * - No border/background styling from the wrapper
+   * - No state icon (spinner, checkmark, error)
+   * - Your component controls 100% of the rendered output
+   *
+   * Use this when you need complete control over the tool's visual presentation,
+   * such as inline confirmations, custom cards, or non-standard layouts.
+   */
+  fullCustom?: boolean
 }
 
 // =============================================================================
