@@ -76,7 +76,12 @@
   },
   "activationEvents": [
     "onCommand:NextWebview1.start",
-    "onCommand:NextWebview2.start"
+    "onCommand:NextWebview2.start",
+    "onCommand:movesia.installUnityPackage",
+    "onCommand:movesia.checkUnityPackage",
+    "onCommand:movesia.uninstallUnityPackage",
+    "onCommand:movesia.findUnityProjects",
+    "onCommand:movesia.selectUnityProject"
   ],
   "contributes": {
     "commands": [
@@ -88,6 +93,21 @@
       {
         "command": "NextWebview2.start",
         "title": "Open Webview 2",
+        "category": "Movesia"
+      },
+      {
+        "command": "movesia.installUnityPackage",
+        "title": "Install Unity Package",
+        "category": "Movesia"
+      },
+      {
+        "command": "movesia.uninstallUnityPackage",
+        "title": "Uninstall Unity Package",
+        "category": "Movesia"
+      },
+      {
+        "command": "movesia.selectUnityProject",
+        "title": "Select Unity Project",
         "category": "Movesia"
       }
     ]

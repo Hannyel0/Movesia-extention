@@ -1,0 +1,25 @@
+{
+  "name": "com.movesia.unity",
+  "version": "0.1.0",
+  "displayName": "Movesia Package",
+  "description": "WebSocket connection client for Unity Editor with automatic reconnection, heartbeat, and exponential backoff.",
+  "unity": "2021.3",
+  "documentationUrl": "https://github.com/YOUR_USERNAME/movesia-connection#readme",
+  "changelogUrl": "https://github.com/YOUR_USERNAME/movesia-connection/blob/main/CHANGELOG.md",
+  "licensesUrl": "https://github.com/YOUR_USERNAME/movesia-connection/blob/main/LICENSE.md",
+  "dependencies": {
+    "com.unity.nuget.newtonsoft-json": "3.2.1",
+    "com.endel.nativewebsocket": "https://github.com/endel/NativeWebSocket.git#upm"
+  },
+  "keywords": [
+    "websocket",
+    "connection",
+    "editor",
+    "networking",
+    "realtime"
+  ],
+  "author": {
+    "name": "Movesia",
+    "url": "https://github.com/YOUR_USERNAME"
+  }
+}
