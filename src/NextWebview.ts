@@ -9,7 +9,7 @@ type NextWebviewOptions = {
   scriptUri?: vscode.Uri
   styleUri?: vscode.Uri
   nonce?: string
-  handleMessage?: (message: any) => any
+  handleMessage?: (message: any, postMessage: (msg: any) => void) => any
 }
 
 abstract class NextWebview {
@@ -28,7 +28,7 @@ abstract class NextWebview {
           'out/webviews/style.css'
         ),
         nonce: nanoid(),
-        handleMessage: () => {},
+        handleMessage: (_msg: any, _postMessage: (msg: any) => void) => {},
       },
       options
     )
@@ -45,8 +45,10 @@ abstract class NextWebview {
   }
 
   protected handleMessage(message: any): void {
-    this._opts.handleMessage(message)
+    this._opts.handleMessage(message, this.postMessage.bind(this))
   }
+
+  public abstract postMessage(message: any): void
 
   protected _getContent(webview: vscode.Webview) {
     // Prepare webview URIs
@@ -68,7 +70,7 @@ abstract class NextWebview {
 				Use a content security policy to only allow loading images from https or from our extension directory,
 				and only allow scripts that have a specific nonce.
         -->
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} 'self' data:; style-src ${webview.cspSource}; script-src 'nonce-${this._opts.nonce}'; connect-src http://127.0.0.1:8765;">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} 'self' data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${this._opts.nonce}'; connect-src http://127.0.0.1:8765;">
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
         
@@ -111,6 +113,10 @@ export class NextWebviewPanel extends NextWebview implements vscode.Disposable {
     if (instance) {
       // If we already have an instance, use it to show the panel
       instance.panel.reveal(_opts.column)
+      // Update the message handler if provided (important for reconnecting after panel reuse)
+      if (opts.handleMessage) {
+        instance._opts.handleMessage = opts.handleMessage
+      }
     } else {
       // Otherwise, create an instance
       instance = new NextWebviewPanel(_opts)
@@ -173,6 +179,10 @@ export class NextWebviewPanel extends NextWebview implements vscode.Disposable {
     this.panel.webview.html = this._getContent(this.panel.webview)
   }
 
+  public postMessage(message: any): void {
+    this.panel.webview.postMessage(message)
+  }
+
   public dispose() {
     // Disposes of this instance
     // Next time getInstance() is called, it will construct a new instance
@@ -222,6 +232,12 @@ export class NextWebviewSidebar
   update(): void {
     if (this._webview) {
       this._webview.webview.html = this._getContent(this._webview.webview)
+    }
+  }
+
+  public postMessage(message: any): void {
+    if (this._webview) {
+      this._webview.webview.postMessage(message)
     }
   }
 }

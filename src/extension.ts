@@ -11,17 +11,165 @@ import {
   type UnityProject,
 } from './services/unity-project-scanner'
 
+// Types for webview messages
+interface UnityProjectInfo {
+  path: string
+  name: string
+  editorVersion?: string
+  movesiaInstalled: boolean
+  movesiaVersion?: string
+}
+
+type WebviewMessage =
+  | { type: 'getUnityProjects' }
+  | { type: 'checkPackageStatus'; projectPath: string }
+  | { type: 'installPackage'; projectPath: string }
+  | { type: 'setSelectedProject'; projectPath: string }
+  | { type: 'getSelectedProject' }
+  | { type: 'browseForProject' }
+
 export function activate(context: vscode.ExtensionContext) {
   const installer = createInstaller(context.extensionPath)
 
+  // Key for storing selected project in workspace state
+  const SELECTED_PROJECT_KEY = 'movesia.selectedProject'
+
+  /**
+   * Handle messages from the webview
+   */
+  async function handleWebviewMessage(
+    message: WebviewMessage,
+    postMessage: (msg: any) => void
+  ) {
+    console.log('[Extension] Received message from webview:', message)
+
+    switch (message.type) {
+      case 'getUnityProjects': {
+        postMessage({ type: 'unityProjectsLoading' })
+        try {
+          const projects = await findUnityProjects()
+          // Check installation status for each project
+          const projectsWithStatus: UnityProjectInfo[] = await Promise.all(
+            projects.map(async (p) => {
+              const status = await installer.checkInstallation(p.path)
+              return {
+                path: p.path,
+                name: p.name,
+                editorVersion: p.editorVersion,
+                movesiaInstalled: status.installed,
+                movesiaVersion: status.version,
+              }
+            })
+          )
+          postMessage({ type: 'unityProjects', projects: projectsWithStatus })
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+          postMessage({ type: 'unityProjectsError', error: errorMessage })
+        }
+        break
+      }
+
+      case 'checkPackageStatus': {
+        try {
+          const status = await installer.checkInstallation(message.projectPath)
+          postMessage({
+            type: 'packageStatus',
+            projectPath: message.projectPath,
+            installed: status.installed,
+            version: status.version,
+          })
+        } catch (err) {
+          postMessage({
+            type: 'packageStatus',
+            projectPath: message.projectPath,
+            installed: false,
+          })
+        }
+        break
+      }
+
+      case 'installPackage': {
+        postMessage({ type: 'packageInstalling', projectPath: message.projectPath })
+        try {
+          const result = await installer.install(message.projectPath)
+          postMessage({
+            type: 'packageInstallComplete',
+            projectPath: message.projectPath,
+            success: result.success,
+            error: result.error,
+            version: result.installedVersion,
+          })
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+          postMessage({
+            type: 'packageInstallComplete',
+            projectPath: message.projectPath,
+            success: false,
+            error: errorMessage,
+          })
+        }
+        break
+      }
+
+      case 'setSelectedProject': {
+        await context.workspaceState.update(SELECTED_PROJECT_KEY, message.projectPath)
+        postMessage({ type: 'selectedProject', projectPath: message.projectPath })
+        break
+      }
+
+      case 'getSelectedProject': {
+        const projectPath = context.workspaceState.get<string>(SELECTED_PROJECT_KEY) || null
+        postMessage({ type: 'selectedProject', projectPath })
+        break
+      }
+
+      case 'browseForProject': {
+        const folder = await vscode.window.showOpenDialog({
+          canSelectFolders: true,
+          canSelectFiles: false,
+          canSelectMany: false,
+          title: 'Select Unity Project Folder',
+          openLabel: 'Select Project',
+        })
+
+        if (!folder || folder.length === 0) {
+          postMessage({ type: 'browseResult', project: null })
+          return
+        }
+
+        const folderPath = folder[0].fsPath
+        const project = await isUnityProject(folderPath)
+
+        if (!project) {
+          vscode.window.showErrorMessage('Selected folder is not a valid Unity project')
+          postMessage({ type: 'browseResult', project: null })
+          return
+        }
+
+        // Check installation status
+        const status = await installer.checkInstallation(project.path)
+        const projectInfo: UnityProjectInfo = {
+          path: project.path,
+          name: project.name,
+          editorVersion: project.editorVersion,
+          movesiaInstalled: status.installed,
+          movesiaVersion: status.version,
+        }
+        postMessage({ type: 'browseResult', project: projectInfo })
+        break
+      }
+    }
+  }
+
   context.subscriptions.push(
-    // Existing webview commands
+    // Existing webview commands - now starts at project selector
     vscode.commands.registerCommand('NextWebview1.start', async () => {
       await NextWebviewPanel.getInstance({
         extensionUri: context.extensionUri,
-        route: 'chatView',
+        route: 'projectSelector',
         title: 'Movesia AI Chat',
         viewId: 'movesiaChat',
+        handleMessage: handleWebviewMessage,
       })
     }),
     vscode.commands.registerCommand('NextWebview2.start', async () => {

@@ -1,46 +1,27 @@
-import React, { useEffect } from 'react'
+import React from 'react'
 import { createRoot } from 'react-dom/client'
 import ChatView from './ChatView'
 import View2 from './View2'
+import ProjectSelector from './ProjectSelector'
+import InstallPackage from './InstallPackage'
 import './lib/vscode.css'
-import {
-  MemoryRouter as Router,
-  Routes,
-  Route,
-  useLocation,
-  useNavigate,
-} from 'react-router-dom'
-
-// TODO: Type the incoming config data
-let config: any = {}
-let workspace = ''
-
-const root = document.getElementById('root')
-
-if (root) {
-  workspace = root.getAttribute('data-workspace') || ''
-}
-
-window.addEventListener('message', e => {
-  // Here's where you'd do stuff with the message
-  // Maybe stick it into state management or something?
-  const message = e.data
-  console.debug(message)
-})
+import { MemoryRouter as Router, Routes, Route } from 'react-router-dom'
 
 const rootEl = document.getElementById('root')
 
-function AppRoutes() {
-  let location = useLocation()
-  let navigate = useNavigate()
-  useEffect(() => {
-    navigate(`/${rootEl!.dataset.route}`, { replace: true })
-  }, [])
+// Get the initial route from data attribute, ensure it has leading slash
+const getInitialRoute = () => {
+  const route = rootEl?.dataset.route || 'projectSelector'
+  return route.startsWith('/') ? route : `/${route}`
+}
 
+function AppRoutes() {
   return (
     <Routes>
-      <Route path="chatView" element={<ChatView />} />
-      <Route path="view2" element={<View2 />} />
+      <Route path="/projectSelector" element={<ProjectSelector />} />
+      <Route path="/installPackage" element={<InstallPackage />} />
+      <Route path="/chatView" element={<ChatView />} />
+      <Route path="/view2" element={<View2 />} />
     </Routes>
   )
 }
@@ -48,7 +29,7 @@ function AppRoutes() {
 const reactRoot = createRoot(rootEl!)
 reactRoot.render(
   <React.StrictMode>
-    <Router initialEntries={[rootEl?.dataset.route ?? '/']} initialIndex={0}>
+    <Router initialEntries={[getInitialRoute()]} initialIndex={0}>
       <AppRoutes />
     </Router>
   </React.StrictMode>
