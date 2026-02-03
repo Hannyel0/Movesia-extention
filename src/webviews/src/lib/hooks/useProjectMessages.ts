@@ -25,7 +25,8 @@ export function useProjectMessages(onMessage: MessageHandler) {
         message.type === 'packageInstalling' ||
         message.type === 'packageInstallComplete' ||
         message.type === 'selectedProject' ||
-        message.type === 'browseResult'
+        message.type === 'browseResult' ||
+        message.type === 'unityRunningStatus'
       ) {
         onMessageRef.current(message)
       }

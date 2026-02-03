@@ -88,26 +88,13 @@ function ProjectSelector() {
   const handleProjectClick = (project: UnityProjectInfo) => {
     console.log('[ProjectSelector] handleProjectClick called', project)
 
-    // First check if package is installed (if we don't know yet)
-    if (project.movesiaInstalled === undefined) {
-      console.log('[ProjectSelector] Package status unknown, checking...')
-      setCheckingProject(project.path)
-      checkPackageStatus(project.path)
-      return
-    }
-
     // Set the selected project (for persistence)
     setSelectedProject(project.path)
 
-    // Navigate based on installation status
-    console.log('[ProjectSelector] Navigating...', { movesiaInstalled: project.movesiaInstalled })
-    if (project.movesiaInstalled) {
-      console.log('[ProjectSelector] -> /chatView')
-      navigate('/chatView')
-    } else {
-      console.log('[ProjectSelector] -> /installPackage')
-      navigate('/installPackage', { state: { project } })
-    }
+    // Always navigate to installPackage first - it acts as a gatekeeper
+    // checking package installation, Unity running, and agent connection
+    console.log('[ProjectSelector] -> /installPackage')
+    navigate('/installPackage', { state: { project } })
   }
 
   const handleBrowse = () => {

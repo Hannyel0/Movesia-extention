@@ -1,4 +1,6 @@
 import * as vscode from 'vscode'
+import * as fs from 'fs'
+import * as path from 'path'
 import { NextWebviewPanel } from './NextWebview'
 import {
   createInstaller,
@@ -27,6 +29,7 @@ type WebviewMessage =
   | { type: 'setSelectedProject'; projectPath: string }
   | { type: 'getSelectedProject' }
   | { type: 'browseForProject' }
+  | { type: 'checkUnityRunning'; projectPath: string }
 
 export function activate(context: vscode.ExtensionContext) {
   const installer = createInstaller(context.extensionPath)
@@ -156,6 +159,19 @@ export function activate(context: vscode.ExtensionContext) {
           movesiaVersion: status.version,
         }
         postMessage({ type: 'browseResult', project: projectInfo })
+        break
+      }
+
+      case 'checkUnityRunning': {
+        // Check if Unity has the project open by looking for the Temp folder
+        // Unity creates this folder when a project is open and removes it when closed
+        const tempFolderPath = path.join(message.projectPath, 'Temp')
+        const isRunning = fs.existsSync(tempFolderPath)
+        postMessage({
+          type: 'unityRunningStatus',
+          projectPath: message.projectPath,
+          isRunning,
+        })
         break
       }
     }

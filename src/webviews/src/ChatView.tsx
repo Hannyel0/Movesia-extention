@@ -56,10 +56,6 @@ function ChatView() {
   const [inputValue, setInputValue] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Placeholder for AI SDK - we need status and messages before we can use the hooks
-  // So we declare the chat hook first, then pass its values to our custom hooks
-  const [chatInitialized, setChatInitialized] = useState(false)
-
   // We need a ref to store handleToolCallEvent since it's used in the transport
   // but the transport is defined before we have access to the hook
   const toolCallEventHandlerRef = useRef<

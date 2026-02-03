@@ -18,6 +18,7 @@ export type ProjectMessageType =
   | { type: 'setSelectedProject'; projectPath: string }
   | { type: 'getSelectedProject' }
   | { type: 'browseForProject' }
+  | { type: 'checkUnityRunning'; projectPath: string }
 
 // Response types from extension
 export type ProjectResponseType =
@@ -29,3 +30,4 @@ export type ProjectResponseType =
   | { type: 'packageInstallComplete'; projectPath: string; success: boolean; error?: string; version?: string }
   | { type: 'selectedProject'; projectPath: string | null }
   | { type: 'browseResult'; project: UnityProjectInfo | null }
+  | { type: 'unityRunningStatus'; projectPath: string; isRunning: boolean }
