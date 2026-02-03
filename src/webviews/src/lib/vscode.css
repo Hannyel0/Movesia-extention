@@ -6,9 +6,18 @@
   * {
     @apply border-border;
   }
-  body {
-    @apply bg-background text-foreground;
+  html, body {
+    @apply text-foreground;
+    background-color: var(--vscode-sideBar-background);
     font-feature-settings: 'rlig' 1, 'calt' 1;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+  }
+  #root {
+    width: 100%;
+    height: 100%;
   }
 }
 @layer components {
