@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   Package,
-  ArrowLeft,
+  FolderSync,
   Folder,
   ExternalLink,
   RefreshCw,
@@ -87,7 +87,7 @@ function InstallPackage() {
     [projectPath]
   )
 
-  const { installPackage, checkPackageStatus } = useProjectMessages(handleMessage)
+  const { installPackage, checkPackageStatus, clearSelectedProject } = useProjectMessages(handleMessage)
 
   // Check if package is already installed on mount
   useEffect(() => {
@@ -148,7 +148,8 @@ function InstallPackage() {
     installPackage(projectPath)
   }
 
-  const handleBack = () => {
+  const handleChangeProject = () => {
+    clearSelectedProject()
     navigate('/projectSelector')
   }
 
@@ -224,9 +225,9 @@ function InstallPackage() {
     <div className="flex flex-col h-screen bg-vscode-editor-background text-vscode-foreground">
       {/* Header */}
       <header className="flex-shrink-0 px-4 py-3 border-b border-vscode-panel-border">
-        <Button variant="ghost" size="sm" onClick={handleBack} className="gap-2">
-          <ArrowLeft className="w-4 h-4" />
-          Back to projects
+        <Button variant="ghost" size="sm" onClick={handleChangeProject} className="gap-2">
+          <FolderSync className="w-4 h-4" />
+          Change Project
         </Button>
       </header>
 

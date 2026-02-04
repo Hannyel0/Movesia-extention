@@ -74,6 +74,10 @@ export function useProjectMessages(onMessage: MessageHandler) {
     sendMessage({ type: 'browseForProject' })
   }, [sendMessage])
 
+  const clearSelectedProject = useCallback(() => {
+    sendMessage({ type: 'clearSelectedProject' })
+  }, [sendMessage])
+
   return {
     getUnityProjects,
     checkPackageStatus,
@@ -81,5 +85,6 @@ export function useProjectMessages(onMessage: MessageHandler) {
     setSelectedProject,
     getSelectedProject,
     browseForProject,
+    clearSelectedProject,
   }
 }

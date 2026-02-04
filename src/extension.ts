@@ -28,6 +28,7 @@ type WebviewMessage =
   | { type: 'installPackage'; projectPath: string }
   | { type: 'setSelectedProject'; projectPath: string }
   | { type: 'getSelectedProject' }
+  | { type: 'clearSelectedProject' }
   | { type: 'browseForProject' }
   | { type: 'checkUnityRunning'; projectPath: string }
 
@@ -126,6 +127,12 @@ export function activate(context: vscode.ExtensionContext) {
         break
       }
 
+      case 'clearSelectedProject': {
+        await context.workspaceState.update(SELECTED_PROJECT_KEY, undefined)
+        postMessage({ type: 'selectedProject', projectPath: null })
+        break
+      }
+
       case 'browseForProject': {
         const folder = await vscode.window.showOpenDialog({
           canSelectFolders: true,
@@ -178,11 +185,45 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   context.subscriptions.push(
-    // Existing webview commands - now starts at project selector
+    // Existing webview commands - now checks for last used project
     vscode.commands.registerCommand('NextWebview1.start', async () => {
+      // Check if there's a previously selected project
+      const savedProjectPath = context.workspaceState.get<string>(SELECTED_PROJECT_KEY)
+      let initialRoute = 'projectSelector'
+
+      if (savedProjectPath) {
+        // Verify the project still exists
+        const projectExists = fs.existsSync(savedProjectPath)
+        if (projectExists) {
+          // Check if the Movesia package is still installed
+          const status = await installer.checkInstallation(savedProjectPath)
+          if (status.installed) {
+            // Check if Unity has the project open (Temp folder exists)
+            const tempFolderPath = path.join(savedProjectPath, 'Temp')
+            const isUnityOpen = fs.existsSync(tempFolderPath)
+
+            if (isUnityOpen) {
+              // All good - go straight to chat
+              initialRoute = 'chatView'
+            } else {
+              // Unity not open - show install/setup screen
+              initialRoute = 'installPackage'
+            }
+          } else {
+            // Package not installed - show install screen
+            initialRoute = 'installPackage'
+          }
+        } else {
+          // Project no longer exists - clear the stored value
+          await context.workspaceState.update(SELECTED_PROJECT_KEY, undefined)
+        }
+      }
+
+      console.log(`[Extension] Starting with route: ${initialRoute}, savedProject: ${savedProjectPath}`)
+
       await NextWebviewPanel.getInstance({
         extensionUri: context.extensionUri,
-        route: 'projectSelector',
+        route: initialRoute,
         title: 'Movesia AI Chat',
         viewId: 'movesiaChat',
         handleMessage: handleWebviewMessage,

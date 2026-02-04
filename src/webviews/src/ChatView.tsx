@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState, memo, useCallback } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { useNavigate } from 'react-router-dom'
 import type { UIMessage } from 'ai'
-import { Loader2, Sparkles, Settings, StopCircle } from 'lucide-react'
+import { Loader2, Sparkles, Settings, StopCircle, FolderSync } from 'lucide-react'
 import { Button } from './lib/components/ui/button'
 import { cn } from './lib/utils'
 import { MarkdownRenderer } from './lib/components/MarkdownRenderer'
@@ -23,6 +23,7 @@ import { createUIMessageChunkStream } from './lib/streaming/sseParser'
 import { useToolCalls } from './lib/hooks/useToolCalls'
 import { useThreads } from './lib/hooks/useThreads'
 import { useSelectedProject } from './lib/hooks/useSelectedProject'
+import { useProjectMessages } from './lib/hooks/useProjectMessages'
 import VSCodeAPI from './lib/VSCodeAPI'
 import { generateMessageSegments } from './lib/utils/messageSegments'
 import type { DisplayMessage, MessageSegment } from './lib/types/chat'
@@ -67,6 +68,15 @@ function ChatView() {
 
   // Get selected project path for redirect and Unity running check
   const { projectPath: selectedProjectPath, isLoading: isLoadingProject } = useSelectedProject()
+
+  // Project messages hook for change project functionality
+  const { clearSelectedProject } = useProjectMessages(() => {})
+
+  // Handle changing the project
+  const handleChangeProject = useCallback(() => {
+    clearSelectedProject()
+    navigate('/projectSelector')
+  }, [clearSelectedProject, navigate])
 
   // MANUAL ONE-TIME UNITY CHECK (no hook to avoid race conditions)
   // This effect sends the check request and sets up a listener for the response
@@ -390,9 +400,14 @@ function ChatView() {
             onDeleteThread={handleDeleteThread}
           />
         </div>
-        <Button variant="ghost" size="icon" onClick={clearChat} title="Settings">
-          <Settings className="w-4 h-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" onClick={handleChangeProject} title="Change Project">
+            <FolderSync className="w-4 h-4" />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={clearChat} title="Settings">
+            <Settings className="w-4 h-4" />
+          </Button>
+        </div>
       </header>
 
       {/* Messages Area */}

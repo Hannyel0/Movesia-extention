@@ -17,6 +17,7 @@ export type ProjectMessageType =
   | { type: 'installPackage'; projectPath: string }
   | { type: 'setSelectedProject'; projectPath: string }
   | { type: 'getSelectedProject' }
+  | { type: 'clearSelectedProject' }
   | { type: 'browseForProject' }
   | { type: 'checkUnityRunning'; projectPath: string }
 
