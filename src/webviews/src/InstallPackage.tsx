@@ -91,13 +91,21 @@ function InstallPackage() {
 
   // Check if package is already installed on mount
   useEffect(() => {
+    console.log('[InstallPackage] Mount/project check:', {
+      projectPath,
+      projectFromState: project,
+      movesiaInstalled: project?.movesiaInstalled,
+    })
+
     if (projectPath) {
       // First check if we have the info from navigation state
       if (project?.movesiaInstalled) {
+        console.log('[InstallPackage] Package already installed (from nav state), setting success')
         setInstallState('success')
         setInstalledVersion(project.movesiaVersion || null)
       } else {
         // Otherwise, check with the extension
+        console.log('[InstallPackage] Checking package status with extension...')
         checkPackageStatus(projectPath)
       }
     }
@@ -115,11 +123,20 @@ function InstallPackage() {
   // - Unity has the project open (Temp folder exists)
   // - Agent is connected
   useEffect(() => {
+    console.log('[InstallPackage] Checking auto-navigate conditions:', {
+      installState,
+      isUnityOpen,
+      connectionState,
+      allMet: installState === 'success' && isUnityOpen && connectionState === 'connected',
+    })
+
     if (installState === 'success' && isUnityOpen && connectionState === 'connected') {
-      // Small delay to show the completed state
+      console.log('[InstallPackage] ✅ All conditions met, navigating to /chatView in 200ms')
+      // Short delay to avoid flicker, but fast enough to feel instant
       const timer = setTimeout(() => {
+        console.log('[InstallPackage] -> /chatView')
         navigate('/chatView')
-      }, 1000)
+      }, 200)
       return () => clearTimeout(timer)
     }
   }, [installState, isUnityOpen, connectionState, navigate])

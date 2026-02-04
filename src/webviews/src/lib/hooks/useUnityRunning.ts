@@ -51,6 +51,10 @@ export function useUnityRunning({
         message.type === 'unityRunningStatus' &&
         message.projectPath === projectPath
       ) {
+        console.log('[useUnityRunning] Received response:', {
+          projectPath: message.projectPath,
+          isRunning: message.isRunning,
+        })
         setIsRunning(message.isRunning)
         setIsLoading(false)
       }
@@ -69,21 +73,28 @@ export function useUnityRunning({
     })
   }, [projectPath])
 
-  // Initial check and polling
+  // Initial check and optional polling
   useEffect(() => {
     if (!enabled || !projectPath) {
-      setIsLoading(false)
+      // Only set loading to false if we were never enabled
+      // Don't set to false if we're just waiting for a response
+      if (!projectPath) {
+        setIsLoading(false)
+      }
       return
     }
 
-    // Reset loading state when project changes
+    // Reset loading state when starting a check
     setIsLoading(true)
+    console.log('[useUnityRunning] Starting check for:', projectPath)
 
     // Check immediately
     checkUnityRunning()
 
-    // Set up polling interval
-    intervalRef.current = setInterval(checkUnityRunning, pollInterval)
+    // Set up polling interval only if pollInterval > 0
+    if (pollInterval > 0) {
+      intervalRef.current = setInterval(checkUnityRunning, pollInterval)
+    }
 
     return () => {
       if (intervalRef.current) {

@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, memo, useCallback } from 'react'
 import { useChat } from '@ai-sdk/react'
+import { useNavigate } from 'react-router-dom'
 import type { UIMessage } from 'ai'
 import { Loader2, Sparkles, Settings, StopCircle } from 'lucide-react'
 import { Button } from './lib/components/ui/button'
@@ -21,8 +22,11 @@ import type { ToolUIProps } from './lib/components/tools'
 import { createUIMessageChunkStream } from './lib/streaming/sseParser'
 import { useToolCalls } from './lib/hooks/useToolCalls'
 import { useThreads } from './lib/hooks/useThreads'
+import { useSelectedProject } from './lib/hooks/useSelectedProject'
+import VSCodeAPI from './lib/VSCodeAPI'
 import { generateMessageSegments } from './lib/utils/messageSegments'
 import type { DisplayMessage, MessageSegment } from './lib/types/chat'
+import type { ProjectResponseType } from './lib/types/project'
 
 // Initialize custom tool UIs on module load
 ensureCustomToolUIsRegistered()
@@ -53,8 +57,86 @@ function getMessageTextContent(msg: UIMessage): string {
 }
 
 function ChatView() {
+  const navigate = useNavigate()
   const [inputValue, setInputValue] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Track if we've done the initial check
+  const hasCheckedRef = useRef(false)
+  const [isInitializing, setIsInitializing] = useState(true)
+
+  // Get selected project path for redirect and Unity running check
+  const { projectPath: selectedProjectPath, isLoading: isLoadingProject } = useSelectedProject()
+
+  // MANUAL ONE-TIME UNITY CHECK (no hook to avoid race conditions)
+  // This effect sends the check request and sets up a listener for the response
+  useEffect(() => {
+    // Wait for project path to load first
+    if (isLoadingProject) {
+      console.log('[ChatView] Waiting for project path to load...')
+      return
+    }
+
+    // If no project path, redirect to project selector
+    if (!selectedProjectPath) {
+      console.log('[ChatView] No project path, redirecting to project selector')
+      navigate('/projectSelector')
+      return
+    }
+
+    // Only do this check once
+    if (hasCheckedRef.current) {
+      console.log('[ChatView] Already checked Unity status, skipping')
+      return
+    }
+
+    console.log('[ChatView] Starting manual Unity check for:', selectedProjectPath)
+
+    // Set up message listener BEFORE sending the request
+    const handleMessage = (event: MessageEvent) => {
+      const message = event.data as ProjectResponseType
+
+      // Only handle the response for our specific project
+      if (message.type === 'unityRunningStatus' && message.projectPath === selectedProjectPath) {
+        console.log('[ChatView] Received Unity running status response:', {
+          projectPath: message.projectPath,
+          isRunning: message.isRunning,
+        })
+
+        // Mark as checked so we don't repeat
+        hasCheckedRef.current = true
+
+        // Clean up listener immediately
+        window.removeEventListener('message', handleMessage)
+
+        // Now make the decision based on actual response
+        if (!message.isRunning) {
+          console.log('[ChatView] ❌ Unity not open (Temp folder missing), redirecting to install screen')
+          navigate('/installPackage', {
+            state: { projectPath: selectedProjectPath },
+          })
+        } else {
+          console.log('[ChatView] ✅ Unity is open, staying on chat')
+          setIsInitializing(false)
+        }
+      }
+    }
+
+    // Add listener
+    window.addEventListener('message', handleMessage)
+
+    // Send the check request
+    console.log('[ChatView] Sending checkUnityRunning message...')
+    VSCodeAPI.postMessage({
+      type: 'checkUnityRunning',
+      projectPath: selectedProjectPath,
+    })
+
+    // Cleanup if component unmounts before response
+    return () => {
+      window.removeEventListener('message', handleMessage)
+    }
+  }, [selectedProjectPath, isLoadingProject, navigate])
 
   // We need a ref to store handleToolCallEvent since it's used in the transport
   // but the transport is defined before we have access to the hook
@@ -283,6 +365,16 @@ function ChatView() {
       segments,
     }
   })
+
+  // Show loading state while checking if Unity is open
+  if (isInitializing || isLoadingProject) {
+    return (
+      <div className="flex flex-col h-screen overflow-hidden bg-[var(--vscode-sideBar-background)] text-foreground items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mb-3" />
+        <p className="text-sm text-muted-foreground">Checking if Unity is open...</p>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-[var(--vscode-sideBar-background)] text-foreground">

@@ -91,10 +91,16 @@ function ProjectSelector() {
     // Set the selected project (for persistence)
     setSelectedProject(project.path)
 
-    // Always navigate to installPackage first - it acts as a gatekeeper
-    // checking package installation, Unity running, and agent connection
-    console.log('[ProjectSelector] -> /installPackage')
-    navigate('/installPackage', { state: { project } })
+    // Simple routing based on package installation:
+    // - Package installed → go to ChatView (ChatView will check if Unity is open)
+    // - Package not installed → go to InstallPackage
+    if (project.movesiaInstalled) {
+      console.log('[ProjectSelector] Package installed -> /chatView')
+      navigate('/chatView')
+    } else {
+      console.log('[ProjectSelector] Package not installed -> /installPackage')
+      navigate('/installPackage', { state: { project } })
+    }
   }
 
   const handleBrowse = () => {
