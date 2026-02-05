@@ -15,7 +15,6 @@ export function useProjectMessages(onMessage: MessageHandler) {
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data as ProjectResponseType
-      console.log('[Webview] Received message from extension:', message)
       // Filter for project-related messages
       if (
         message.type === 'unityProjects' ||
@@ -37,7 +36,6 @@ export function useProjectMessages(onMessage: MessageHandler) {
   }, [])
 
   const sendMessage = useCallback((message: ProjectMessageType) => {
-    console.log('[Webview] Sending message to extension:', message)
     VSCodeAPI.postMessage(message)
   }, [])
 

@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Movesia Extension is a VS Code extension with a Python backend agent for Unity Editor integration. It combines React 19 webviews running inside VS Code with a LangGraph agent server that communicates with Unity via WebSocket.
+Movesia Extension is a VS Code extension with an **embedded TypeScript LangGraph agent** for Unity Editor integration. It combines React 19 webviews running inside VS Code with a LangGraph agent that communicates with Unity via WebSocket.
+
+**Key Architecture Change**: The agent is now fully embedded in TypeScript (running in the Node.js extension process) with an **sql.js-based checkpointer** for conversation persistence. The Python backend has been deprecated.
 
 ## Build Commands
 
@@ -23,18 +25,17 @@ npm run format         # Prettier
 
 **Development workflow**: Use VS Code's built-in "Run and Debug" (F5) which executes both `tsc watch` and `vite build` in parallel via `.vscode/tasks.json`.
 
-**Python agent** (in `agent/` directory):
-```bash
-cd agent/
-python server.py
-```
+**No separate agent server needed** - the LangGraph agent runs embedded in the extension process.
 
 ## Architecture
 
-### Two-Part System
+### Single-Process System
 
 1. **VS Code Extension** (TypeScript/React 19) - UI layer with chat interface
-2. **Python Agent Server** (LangGraph/FastAPI) - AI + Unity communication
+2. **Embedded LangGraph Agent** (TypeScript) - AI agent running in extension process
+3. **Unity WebSocket Connection** - Direct communication with Unity Editor
+
+All components run in the same Node.js process for simplified deployment and debugging.
 
 ---
 
@@ -44,18 +45,39 @@ python server.py
 
 **File**: `src/extension.ts`
 
-Registers two commands:
-- `NextWebview1.start` → Opens "Movesia AI Chat" (`chatView` route) - primary interface
-- `NextWebview2.start` → Opens "View 2" (`view2` route) - Zustand demo
+- Initializes `AgentService` immediately on activation (no project path required)
+- Registers command `NextWebview1.start` → Opens "Movesia AI Chat" (`chatView` route)
+- Handles project selection, package installation, and Unity connection management
+- Manages webview message routing for chat, threads, and Unity status
+
+### Agent Service
+
+**File**: `src/services/agent-service.ts`
+
+The `AgentService` class manages the embedded LangGraph agent:
+
+- **Initialization**: Creates agent with `SqlJsCheckpointer` for persistence
+- **Streaming**: Converts LangGraph events to SSE format for frontend
+- **Thread Management**: CRUD operations for conversation threads
+- **Unity Integration**: Passes `UnityManager` instance to tools
+- **API Key Management**: Reads from VS Code secret storage
+
+**Key Methods**:
+```typescript
+async chat(request: ChatRequest): AsyncIterable<AgentEvent>
+async getThreads(): Promise<Thread[]>
+async getThreadMessages(threadId: string): Promise<Message[]>
+async deleteThread(threadId: string): Promise<void>
+```
 
 ### Webview Management
 
 **File**: `src/NextWebview.ts`
 
 - **`NextWebviewPanel`**: Singleton pattern for floating panels. One instance per `viewId`.
-- **`NextWebviewSidebar`**: Implements `vscode.WebviewViewProvider` for sidebar views.
 - **HTML Generation**: Injects nonce for CSP, `data-route` attribute for React router.
 - **Output paths**: `out/webviews/index.mjs` and `out/webviews/style.css`
+- **Message Router**: Proxies webview messages to extension handlers
 
 ### React Application
 
@@ -125,7 +147,7 @@ registerToolUI('my_tool', {
 |------|------|---------|
 | `useToolCalls` | `lib/hooks/useToolCalls.ts` | Tracks tool call state through streaming lifecycle |
 | `useThreads` | `lib/hooks/useThreads.ts` | Thread/conversation management with backend persistence |
-| `useUnityStatus` | `lib/hooks/useUnityStatus.ts` | Polls Unity connection status from backend |
+| `useUnityStatus` | `lib/hooks/useUnityStatus.ts` | Polls Unity connection status from extension |
 | `useVSCodeState` | `lib/state/reactState.tsx` | Persists state to VS Code storage API |
 
 ### Chat Interface Features
@@ -144,98 +166,118 @@ registerToolUI('my_tool', {
 
 ## Agent Architecture
 
-### Server
+### Agent Factory
 
-**File**: `agent/server.py`
+**File**: `src/agent/agent.ts`
 
-FastAPI server with global managers:
-- `interrupt_manager` - Async interrupt handling (compilation waits)
-- `chat_manager` - VS Code session tracking
-- `unity_manager` - Unity WebSocket management
-- `agent_streamer` - LangGraph execution streaming
+Creates the LangGraph agent with Unity tools and configuration:
 
-**Endpoints**:
-```
-GET  /health                              → {"status": "healthy", "unity_connected": bool}
-GET  /status                              → Full server/Unity/chat status
-GET  /unity/status                        → Unity connection state for UI indicator
-POST /api/chat                            → SSE streaming chat endpoint
-GET  /api/conversations                   → List all conversations
-GET  /api/conversations/{id}              → Get conversation details
-GET  /api/conversations/{id}/messages     → Get conversation messages with tool calls
-DELETE /api/conversations/{id}            → Delete conversation
-WS   /ws/chat/{session_id}                → VS Code chat connection (legacy)
-WS   /ws/unity                            → Unity Editor connection
+```typescript
+import { createMovesiaAgent } from './agent'
+
+const agent = createMovesiaAgent({
+  openRouterApiKey: 'sk-or-...',
+  tavilyApiKey: 'tvly-...',
+  projectPath: 'C:/MyUnityProject',
+  unityManager: unityManagerInstance,
+  checkpointer: sqlJsCheckpointer  // Defaults to MemorySaver if not provided
+})
 ```
 
-### Agent Setup
-
-**File**: `agent/agent.py`
-
-```python
-model = ChatOpenAI(
-    model="x-ai/grok-code-fast-1",
-    base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-)
+**Model Configuration**:
+```typescript
+new ChatOpenAI({
+  modelName: 'anthropic/claude-haiku-4.5',
+  configuration: { baseURL: 'https://openrouter.ai/api/v1' },
+  apiKey: process.env.OPENROUTER_API_KEY
+})
 ```
 
-**Middleware**:
-- `OptimizedTodoMiddleware` - Token-optimized task lists
-- `FilesystemMiddleware` - Routes file ops to Unity project
+**Tools**:
+- Unity tools (6 tools - see Unity Tools section)
+- Tavily search (optional - disabled if no API key)
 
-**Backend Routing**:
-- `/memories/` → `StoreBackend` (persistent across threads)
-- `/scratch/` → `StateBackend` (ephemeral, thread-specific)
-- Everything else → `FilesystemBackend` (Unity project at `UNITY_PROJECT_PATH`)
+### Persistence Layer
+
+**File**: `src/agent/database/SqlJsCheckpointer.ts`
+
+Custom LangGraph checkpointer implementation using `sql.js`:
+
+- **Backend**: In-memory SQLite database (via sql.js WASM)
+- **Storage**: Conversations persist to `~/.movesia/checkpoints.sqlite`
+- **Tables**: `checkpoints`, `writes`
+- **Thread Safety**: Async locks for concurrent access
+- **Portability**: No native dependencies, works on all platforms
+
+**Database Engine** (`src/agent/database/engine.ts`):
+- Lazy initialization of sql.js
+- Automatic directory creation for storage path
+- Export/import functionality for backups
+
+**Repository Layer** (`src/agent/database/repository.ts`):
+- `ConversationRepository` - CRUD for conversations
+- `MessageRepository` - Message storage with tool calls
+- Thread metadata management
 
 ### Streaming
 
-**File**: `agent/streaming.py`
+**File**: `src/services/agent-service.ts` (method: `chat()`)
 
-`AgentStreamer` handles:
-- Real-time token streaming to VS Code
-- Tool start/end/error events
-- LangGraph interrupt detection and resumption
-- Waiting messages during Unity operations
+Converts LangGraph events to SSE format for frontend:
 
-**Chat WebSocket Message Types**:
+```typescript
+async *chat(request: ChatRequest): AsyncIterable<AgentEvent> {
+  // Streams LangGraph events as AgentEvent objects
+  yield { type: 'thinking' }
+  yield { type: 'token', delta: '...' }
+  yield { type: 'tool_start', name: 'unity_query', ... }
+  yield { type: 'tool_output', output: {...} }
+  yield { type: 'complete', threadId: '...' }
+}
 ```
-connected       → Initial connection
-thinking        → Agent started
-token           → LLM streaming chunk
-tool_start      → Tool execution began (includes textLengthAtEvent for position)
-tool_input      → Tool input captured
-tool_output     → Tool result received
-tool_error      → Tool failed
-waiting         → Waiting on interrupt
-interrupt_resolved → Interrupt completed
-complete        → Agent finished
-error           → Error occurred
-```
+
+**Event Types**:
+- `thinking` - Agent started processing
+- `token` - LLM streaming chunk
+- `tool_start` - Tool execution began (includes `textLengthAtEvent` for positioning)
+- `tool_input` - Tool input captured
+- `tool_output` - Tool result received
+- `tool_error` - Tool failed
+- `complete` - Agent finished
+- `error` - Error occurred
 
 **Tool Call Lifecycle**:
-1. `tool_start` → state: `streaming` (captures text position)
-2. `tool_input` → state: `executing` (input available)
-3. `tool_output` → state: `completed` (output available)
-4. `tool_error` → state: `error`
+1. `tool_start` → Frontend shows "running" state
+2. `tool_input` → Input displayed in UI
+3. `tool_output` → Output displayed, state = "completed"
+4. `tool_error` → Error displayed, state = "error"
 
 ### Unity Connection
 
-**File**: `agent/unity/unity_manager.py`
+**File**: `src/agent/UnityConnection/UnityManager.ts`
 
-- Single active connection per project (monotonic takeover)
-- Handshake with project path, Unity version, session ID
-- Heartbeat with compilation-aware suspension
-- Command/response correlation for tool calls
+Manages WebSocket connection to Unity Editor:
+
+- **Connection Management**: Single active connection per project
+- **Message Routing**: Correlates requests/responses via message IDs
+- **Heartbeat**: Periodic pings with compilation status detection
+- **Command Interface**: `sendCommand(action, payload)` returns Promise
+- **Event System**: EventEmitter for connection state changes
+
+**Unity WebSocket** (`src/agent/UnityConnection/UnityWsServer.ts`):
+- HTTP server with WebSocket upgrade endpoint at `/ws/unity`
+- Handshake validation (project path, Unity version)
+- Heartbeat monitoring with timeout detection
 
 ---
 
 ## Unity Tools (6 Tools)
 
-Located in `agent/unity_tools/`. All target **Unity 6** (6000.x) API.
+Located in `src/agent/unity-tools/`. All target **Unity 6** (6000.x) API.
 
 ### 1. unity_query (The Observer) - Read-Only
+
+**File**: `src/agent/unity-tools/query.ts`
 
 | Action | Params | Returns |
 |--------|--------|---------|
@@ -246,6 +288,8 @@ Located in `agent/unity_tools/`. All target **Unity 6** (6000.x) API.
 | `get_settings` | `settings_category` | Physics/player/quality settings |
 
 ### 2. unity_hierarchy (The Architect) - Scene Graph
+
+**File**: `src/agent/unity-tools/hierarchy.ts`
 
 | Action | Params | Effect |
 |--------|--------|--------|
@@ -258,6 +302,8 @@ Located in `agent/unity_tools/`. All target **Unity 6** (6000.x) API.
 
 ### 3. unity_component (The Engineer) - Behavior/Data
 
+**File**: `src/agent/unity-tools/component.ts`
+
 | Action | Params | Effect |
 |--------|--------|--------|
 | `add` | `game_object_id`, `component_type` | Attach component |
@@ -265,11 +311,13 @@ Located in `agent/unity_tools/`. All target **Unity 6** (6000.x) API.
 | `remove` | `game_object_id` + `component_type` | Delete component |
 
 **Property format**: Vectors use arrays `[x, y, z]`, not objects.
-```python
-properties={'m_LocalPosition': [0, 5, 0]}  # Correct
+```typescript
+{ m_LocalPosition: [0, 5, 0] }  // Correct
 ```
 
 ### 4. unity_prefab (The Factory) - Templates
+
+**File**: `src/agent/unity-tools/prefab.ts`
 
 | Action | Params | Effect |
 |--------|--------|--------|
@@ -282,6 +330,8 @@ properties={'m_LocalPosition': [0, 5, 0]}  # Correct
 
 ### 5. unity_scene (The Director) - Environment
 
+**File**: `src/agent/unity-tools/scene.ts`
+
 | Action | Params | Effect |
 |--------|--------|--------|
 | `open` | `path`, `additive` | Load scene |
@@ -291,12 +341,14 @@ properties={'m_LocalPosition': [0, 5, 0]}  # Correct
 
 ### 6. unity_refresh (The Compiler) - Script Compilation
 
+**File**: `src/agent/unity-tools/refresh.ts`
+
 Triggers Unity Asset Database refresh. Uses LangGraph `interrupt()` to pause agent.
 
-```python
-unity_refresh(watched_scripts=['PlayerController'])
-# Wait for Unity compilation...
-# Returns: {"status": "SUCCESS", "verification": {"PlayerController": true}}
+```typescript
+await unityRefresh({ watched_scripts: ['PlayerController'] })
+// Agent pauses, waits for Unity compilation...
+// Returns: { status: 'SUCCESS', verification: { PlayerController: true } }
 ```
 
 **Critical workflow**: Always refresh after creating scripts before adding components.
@@ -307,30 +359,61 @@ unity_refresh(watched_scripts=['PlayerController'])
 
 ```
 src/
-├── extension.ts              # Extension activation, command registration
-├── NextWebview.ts            # Webview panel/sidebar base classes
+├── extension.ts                 # Extension activation, command registration
+├── NextWebview.ts               # Webview panel/sidebar base classes
+├── services/
+│   ├── agent-service.ts         # AgentService - LangGraph execution & streaming
+│   ├── unity-package-installer.ts   # Unity package manager integration
+│   └── unity-project-scanner.ts     # Find Unity projects on filesystem
+├── agent/
+│   ├── agent.ts                 # LangGraph agent factory
+│   ├── prompts.ts               # System prompts (Unity 6 API)
+│   ├── utils.ts                 # Text chunking utilities
+│   ├── database/
+│   │   ├── SqlJsCheckpointer.ts # Custom LangGraph checkpointer
+│   │   ├── engine.ts            # sql.js database engine
+│   │   ├── repository.ts        # Conversation/message repositories
+│   │   ├── models.ts            # TypeScript data models
+│   │   └── index.ts             # Public exports
+│   ├── middlewares/
+│   │   └── index.ts             # LangGraph middleware (if any)
+│   ├── UnityConnection/
+│   │   ├── UnityManager.ts      # WebSocket connection manager
+│   │   ├── UnityWsServer.ts     # WebSocket server
+│   │   ├── types.ts             # Message types
+│   │   └── index.ts             # Public exports
+│   └── unity-tools/
+│       ├── index.ts             # Tool registration
+│       ├── connection.ts        # Unity tool base class
+│       ├── query.ts             # unity_query tool
+│       ├── hierarchy.ts         # unity_hierarchy tool
+│       ├── component.ts         # unity_component tool
+│       ├── prefab.ts            # unity_prefab tool
+│       ├── scene.ts             # unity_scene tool
+│       ├── refresh.ts           # unity_refresh tool (with interrupt)
+│       └── types.ts             # Shared types
 └── webviews/
     ├── src/
-    │   ├── index.tsx         # React entry, MemoryRouter setup
-    │   ├── ChatView.tsx      # Main chat interface
-    │   ├── View2.tsx         # Zustand demo view
-    │   ├── testMessages.ts   # Markdown test data
+    │   ├── index.tsx            # React entry, MemoryRouter setup
+    │   ├── ChatView.tsx         # Main chat interface
+    │   ├── View2.tsx            # Zustand demo view
+    │   ├── testMessages.ts      # Markdown test data
     │   └── lib/
-    │       ├── components/   # UI components
+    │       ├── components/      # UI components
     │       │   ├── ChatInput.tsx
     │       │   ├── MarkdownRenderer.tsx
     │       │   ├── ThreadSelector.tsx
     │       │   ├── UnityStatusIndicator.tsx
     │       │   ├── FieldWithDescription.tsx
     │       │   ├── Toggle.tsx
-    │       │   ├── tools/    # Pluggable tool UI system
+    │       │   ├── tools/       # Pluggable tool UI system
     │       │   │   ├── index.ts          # Public exports
     │       │   │   ├── types.ts          # ToolCallData, ToolUIProps interfaces
     │       │   │   ├── registry.ts       # Tool registration/lookup
     │       │   │   ├── DefaultToolUI.tsx # Fallback JSON display
     │       │   │   ├── ToolUIWrapper.tsx # Collapsible wrapper
     │       │   │   └── custom/           # Unity tool UIs
-    │       │   └── ui/       # Radix-based primitives
+    │       │   └── ui/          # Radix-based primitives
     │       ├── hooks/
     │       │   ├── useToolCalls.ts   # Tool call state management
     │       │   ├── useThreads.ts     # Conversation thread management
@@ -344,35 +427,15 @@ src/
     │       ├── state/
     │       │   ├── reactState.tsx    # useVSCodeState hook
     │       │   └── zustandState.tsx  # Zustand + VS Code storage
-    │       ├── VSCodeAPI.tsx # VS Code API wrapper
-    │       ├── utils.ts      # cn() utility for classnames
-    │       └── vscode.css    # Tailwind entry + VS Code variables
-    └── public/               # Static assets
+    │       ├── VSCodeAPI.tsx    # VS Code API wrapper
+    │       ├── utils.ts         # cn() utility for classnames
+    │       └── vscode.css       # Tailwind entry + VS Code variables
+    └── public/                  # Static assets
 
-agent/
-├── server.py                 # FastAPI entry, global managers
-├── agent.py                  # LangGraph agent, model config, middleware
-├── streaming.py              # AgentStreamer, event handling, interrupts
-├── prompts.py                # System prompts (Unity 6 API)
-├── managers/
-│   ├── interrupt_manager.py  # Async interrupt coordination
-│   └── chat_manager.py       # Session tracking
-├── routes/
-│   └── chat_ws.py            # Chat WebSocket handler
-├── unity/
-│   ├── unity_ws.py           # Unity WebSocket endpoint
-│   ├── unity_manager.py      # Connection lifecycle, command routing
-│   ├── config.py             # Configuration classes
-│   └── types.py              # MovesiaMessage envelope
-└── unity_tools/
-    ├── connection.py         # HTTP middleware bridge (port 8766)
-    ├── query.py              # unity_query tool
-    ├── hierarchy.py          # unity_hierarchy tool
-    ├── component.py          # unity_component tool
-    ├── prefab.py             # unity_prefab tool
-    ├── scene.py              # unity_scene tool
-    └── refresh.py            # unity_refresh tool (with interrupt)
+agent-python-(deprecated)/       # Legacy Python implementation (DO NOT USE)
 ```
+
+---
 
 ## Configuration
 
@@ -383,51 +446,43 @@ agent/
 - **Tailwind**: `tailwind.config.js` - VS Code theme colors via `@githubocto/tailwind-vscode`
 - **PostCSS**: `postcss.config.cjs` - Tailwind + nesting plugin
 
-### Agent Environment
+### Extension Settings
 
-**File**: `agent/.env`
+API keys are stored in VS Code secret storage (not in settings.json):
 
-```bash
-# Required
-OPENROUTER_API_KEY=sk-or-v1-...
-TAVILY_API_KEY=tvly-dev-...
-UNITY_PROJECT_PATH=C:/path/to/unity/project
+- `movesia.openRouterApiKey` - OpenRouter API key for LLM access
+- `movesia.tavilyApiKey` - Tavily API key for internet search (optional)
 
-# Optional
-SERVER_HOST=127.0.0.1
-SERVER_PORT=8765
-LOG_LEVEL=INFO
-UNITY_COMMAND_TIMEOUT=30.0
-INTERRUPT_TIMEOUT=120.0
+Unity project path is stored in workspace state and selected via UI.
 
-# LangSmith tracing (optional)
-LANGSMITH_TRACING=true
-LANGSMITH_API_KEY=lsv2_pt_...
-LANGSMITH_PROJECT=your-project
-```
+### Storage Locations
 
-### Port Requirements
+- **Conversation Database**: `~/.movesia/checkpoints.sqlite` (sql.js)
+- **Workspace State**: `.vscode/settings.json` (selected project path)
+- **Secret Storage**: VS Code's platform-specific secure storage
 
-- **8765**: FastAPI server (HTTP + WebSocket)
-- **8766**: Unity middleware (HTTP - tool communication)
+---
 
 ## Key Patterns
 
+- **Embedded Agent**: LangGraph runs in extension process, no separate server
 - **Singleton webviews**: One panel instance per route via static `instances` map
 - **Message passing**: Extension ↔ Webview via `postMessage` API
 - **Interrupt/checkpoint**: Agent pauses for async Unity ops (compilation), resumes with result
 - **Dual build**: TypeScript (tsc) + Vite run in parallel via `.vscode/tasks.json`
 - **VS Code theme integration**: Tailwind classes map to CSS variables (`bg-vscode-editor-background`)
-- **Monotonic takeover**: Higher `conn_seq` supersedes older Unity connections
-- **Tool HTTP bridge**: Unity tools use HTTP (port 8766), not WebSocket, for sync calls
 - **Interleaved tool rendering**: Tool calls appear inline with text at their invocation position using `textLengthAtEvent` markers
-- **SSE streaming**: Chat uses HTTP POST with SSE response (not WebSocket) via Vercel AI SDK v6 custom transport
+- **SSE streaming**: Chat uses SSE format for frontend via async iterables
 - **Pluggable tool UIs**: Register custom React components per tool name for rich rendering
+- **sql.js persistence**: Conversations stored in portable SQLite database without native dependencies
+
+---
 
 ## Dependencies
 
 ### Extension (package.json)
 
+**Frontend**:
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `react` | 19.2.4 | UI framework with automatic JSX transform |
@@ -443,10 +498,138 @@ LANGSMITH_PROJECT=your-project
 | `tailwindcss` | 3.4.19 | Utility CSS framework |
 | `class-variance-authority` | 0.7.1 | Component variant styling |
 
-### Agent (requirements.txt)
+**Backend (Agent)**:
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `@langchain/langgraph` | latest | Agent framework |
+| `@langchain/openai` | latest | LLM integration |
+| `@langchain/tavily` | latest | Internet search tool |
+| `sql.js` | latest | WASM SQLite for checkpoints |
+| `ws` | latest | WebSocket server for Unity |
 
-- `fastapi` + `uvicorn` - HTTP/WebSocket server
-- `langgraph` - Agent framework
-- `langchain-openai` - LLM integration
-- `httpx` - HTTP client for Unity middleware
-- `python-dotenv` - Environment loading
+---
+
+## Migration Notes
+
+### Python → TypeScript Migration
+
+The agent was migrated from Python (FastAPI server) to TypeScript (embedded in extension):
+
+**Benefits**:
+- ✅ Single process - no separate server to manage
+- ✅ Simpler deployment - just install the extension
+- ✅ Better debugging - all code runs in extension host
+- ✅ Portable persistence - sql.js works on all platforms
+- ✅ Direct API key access - uses VS Code secret storage
+
+**Breaking Changes**:
+- ❌ No HTTP endpoints - agent runs in-process
+- ❌ No Python dependencies - all TypeScript/Node.js
+- ❌ New database format - conversations not compatible with old Python checkpoints
+
+**Deprecated**:
+- `agent/` directory (Python) → moved to `agent-python-(deprecated)/`
+- FastAPI server endpoints
+- Python-based tools and middleware
+
+---
+
+## Development Tips
+
+### Debugging the Agent
+
+1. Set breakpoints in `src/agent/agent.ts` or `src/services/agent-service.ts`
+2. Press F5 to launch Extension Development Host
+3. Open "Movesia AI Chat" command
+4. Breakpoints will trigger in your main VS Code window
+
+### Testing Unity Tools
+
+1. Open a Unity project and install the Movesia package
+2. Ensure Unity Editor is running
+3. Check Unity connection status in chat interface (green = connected)
+4. Test tools via chat: "Show me the hierarchy" → triggers `unity_query`
+
+### Database Inspection
+
+```bash
+# Install sql.js CLI (optional)
+npm install -g sql.js
+
+# Inspect database
+sqlite3 ~/.movesia/checkpoints.sqlite
+> .tables
+> SELECT * FROM conversations;
+```
+
+### Viewing Logs
+
+- **Extension Host**: Debug Console in VS Code
+- **Movesia Output**: View → Output → Select "Movesia Agent"
+- **LangGraph Events**: Console logs during streaming
+
+---
+
+## Common Tasks
+
+### Adding a New Unity Tool
+
+1. Create tool file in `src/agent/unity-tools/my-tool.ts`
+2. Define LangChain `StructuredTool` with Zod schema
+3. Export tool in `src/agent/unity-tools/index.ts`
+4. Add to `unityTools` array
+5. (Optional) Create custom UI in `src/webviews/src/lib/components/tools/custom/`
+6. Register UI in `src/webviews/src/ChatView.tsx`
+
+### Updating the LLM Model
+
+Edit `src/agent/agent.ts`:
+
+```typescript
+export function createModel(apiKey?: string) {
+  return new ChatOpenAI({
+    modelName: 'anthropic/claude-sonnet-4.5',  // Change here
+    configuration: { baseURL: 'https://openrouter.ai/api/v1' },
+    apiKey: apiKey ?? process.env.OPENROUTER_API_KEY,
+  })
+}
+```
+
+### Customizing System Prompt
+
+Edit `src/agent/prompts.ts`:
+
+```typescript
+export const UNITY_AGENT_PROMPT = `
+You are Movesia, an AI assistant for Unity game development...
+`
+```
+
+---
+
+## Troubleshooting
+
+### Agent Not Responding
+
+1. Check "Movesia Agent" output panel for errors
+2. Verify API key is set: Command Palette → "Movesia: Set OpenRouter API Key"
+3. Check Debug Console for initialization errors
+
+### Unity Tools Failing
+
+1. Verify Unity Editor is running
+2. Check Movesia package is installed in Unity project
+3. Look for WebSocket connection errors in output panel
+4. Unity status indicator should be green (connected)
+
+### Database Errors
+
+1. Check `~/.movesia/` directory exists and is writable
+2. Delete `checkpoints.sqlite` to reset (conversations will be lost)
+3. Check for file permission errors in output panel
+
+### Build Errors
+
+1. Clean build: `rm -rf out/ && npm run compile`
+2. Reinstall dependencies: `rm -rf node_modules && npm install`
+3. Check TypeScript version: `npm list typescript`

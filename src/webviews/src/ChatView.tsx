@@ -180,28 +180,28 @@ function ChatView() {
     fetchConversationDetails,
   } = useThreads({
     setMessages: (msgs) => {
-      // Convert from thread format to our ChatMessage format
-      const chatMessages: ChatMessage[] = msgs.map(m => ({
-        id: m.id,
-        role: m.role as 'user' | 'assistant',
-        content: m.parts
-          ?.filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-          .map(p => p.text)
-          .join('') || '',
-      }))
-      setMessages(chatMessages)
+      // Messages from useThreads are already in ChatMessage format with content as string
+      setMessages(msgs)
     },
     onClearToolCalls: clearToolCalls,
     onLoadToolCalls: loadToolCalls,
   })
 
-  // Sync thread ID from chat hook with useThreads hook
+  // Sync thread IDs between chat hook and threads hook (bidirectional)
   useEffect(() => {
     if (threadId && threadId !== threadsThreadId) {
+      // Chat hook got a new thread ID (e.g., from backend after first message) → sync to threads hook
       threadsSetThreadId(threadId)
       fetchConversationDetails(threadId)
     }
   }, [threadId, threadsThreadId, threadsSetThreadId, fetchConversationDetails])
+
+  useEffect(() => {
+    if (threadsThreadId && threadsThreadId !== threadId) {
+      // Threads hook got a new thread ID (e.g., user selected an old thread) → sync to chat hook
+      setThreadId(threadsThreadId)
+    }
+  }, [threadsThreadId, threadId, setThreadId])
 
   // Use threadId from chat hook if available, otherwise from threads hook
   const effectiveThreadId = threadId || threadsThreadId

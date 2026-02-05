@@ -44,7 +44,8 @@ const logger = createLogger('movesia.agent')
  * OpenRouter API key for LLM access.
  * This is a SaaS product - the key is provided by Movesia.
  */
-const OPENROUTER_API_KEY = 'sk-or-v1-xxxxxx' // TODO: Replace with actual key
+const OPENROUTER_API_KEY =
+  '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' // TODO: Replace with actual key
 
 /**
  * Tavily API key for internet search (optional).
@@ -409,6 +410,15 @@ export class AgentService {
     logger.info(`[Chat] Starting for thread=${threadId.slice(0, 16)}...`)
 
     try {
+      // Ensure conversation metadata exists in the database
+      if (this.repository) {
+        await this.repository.getOrCreate(threadId, {
+          unityProjectPath: this.config.projectPath || null,
+          unityVersion: null,
+        })
+        logger.info(`[Chat] Conversation metadata created/updated for thread=${threadId.slice(0, 16)}`)
+      }
+
       // Start the message
       onEvent(protocol.start())
 
@@ -522,6 +532,18 @@ export class AgentService {
       logger.info(
         `[Chat] Complete: ${toolCallCount} tools in ${duration.toFixed(2)}s`
       )
+
+      // Update conversation timestamp and title (if first message)
+      if (this.repository) {
+        await this.repository.touch(threadId)
+
+        // Auto-generate title from first user message (truncated)
+        const conversation = await this.repository.get(threadId)
+        if (conversation && !conversation.title) {
+          const title = userText.slice(0, 100).trim()
+          await this.repository.updateTitle(threadId, title)
+        }
+      }
 
       // Finish the message
       onEvent(protocol.finish())
@@ -661,11 +683,202 @@ export class AgentService {
       }>
     }>
   > {
-    // For now, return empty array - messages are stored in LangGraph's checkpoint
-    // We would need to implement a way to retrieve them from the SqliteSaver
-    // TODO: Implement message retrieval from LangGraph checkpoints
     logger.info(`Getting messages for thread: ${threadId}`)
-    return []
+
+    try {
+      // Get the checkpointer instance
+      const checkpointer = getCheckpointSaver()
+
+      // Retrieve the latest checkpoint for this thread
+      const config = { configurable: { thread_id: threadId } }
+      const checkpointTuple = await checkpointer.getTuple(config)
+
+      if (!checkpointTuple) {
+        logger.info(`No checkpoint found for thread: ${threadId}`)
+        return []
+      }
+
+      // Extract messages from the checkpoint
+      const checkpoint = checkpointTuple.checkpoint
+      const channelValues = checkpoint.channel_values as Record<string, unknown>
+
+      // LangGraph stores messages in the 'messages' channel
+      const messages = channelValues.messages
+
+      if (!messages || !Array.isArray(messages)) {
+        logger.warn(`No messages array found in checkpoint for thread: ${threadId}`)
+        return []
+      }
+
+      logger.info(`Found ${messages.length} messages in checkpoint for thread: ${threadId}`)
+
+      // DEBUG: Log the raw messages structure
+      logger.info(`=== RAW MESSAGES DUMP ===`)
+      messages.forEach((msg, idx) => {
+        const msgObj = msg as any
+        const debugInfo = {
+          type: msgObj.type,
+          hasContent: !!msgObj.content,
+          contentType: typeof msgObj.content,
+          contentPreview: typeof msgObj.content === 'string'
+            ? msgObj.content.slice(0, 100)
+            : Array.isArray(msgObj.content)
+              ? `Array[${msgObj.content.length}]`
+              : JSON.stringify(msgObj.content).slice(0, 100),
+          hasToolCalls: !!msgObj.tool_calls,
+          toolCallsCount: msgObj.tool_calls?.length || 0,
+          allKeys: Object.keys(msgObj),
+        }
+        logger.info(`Message ${idx}: ${JSON.stringify(debugInfo, null, 2)}`)
+      })
+      logger.info(`=== END RAW MESSAGES DUMP ===`)
+
+      // First pass: Build a map of tool outputs by tool_call_id
+      const toolOutputs = new Map<string, unknown>()
+      for (const msg of messages) {
+        const msgObj = msg as {
+          type?: string
+          content?: string
+          tool_call_id?: string
+          name?: string
+        }
+
+        if (msgObj.type === 'tool' && msgObj.tool_call_id) {
+          logger.info(`Found ToolMessage: tool_call_id=${msgObj.tool_call_id}, name=${msgObj.name}`)
+          // This is a ToolMessage containing the output for a tool call
+          try {
+            // Try to parse as JSON if it's a string
+            const output = typeof msgObj.content === 'string'
+              ? JSON.parse(msgObj.content)
+              : msgObj.content
+            toolOutputs.set(msgObj.tool_call_id, output)
+            logger.info(`  Stored tool output for ${msgObj.tool_call_id}`)
+          } catch {
+            // If not JSON, store as-is
+            toolOutputs.set(msgObj.tool_call_id, msgObj.content)
+            logger.info(`  Stored raw tool output for ${msgObj.tool_call_id}`)
+          }
+        }
+      }
+
+      // Second pass: Convert LangGraph messages to our format
+      const formattedMessages: Array<{
+        role: string
+        content: string
+        tool_calls?: Array<{
+          id: string
+          name: string
+          input?: Record<string, unknown>
+          output?: unknown
+        }>
+      }> = []
+
+      for (const msg of messages) {
+        // LangGraph messages can be BaseMessage objects with different types
+        // Common types: HumanMessage, AIMessage, ToolMessage, SystemMessage
+        const msgObj = msg as {
+          type?: string
+          content?: string | Array<{ type: string; text?: string }>
+          tool_calls?: Array<{
+            id?: string
+            name?: string
+            args?: Record<string, unknown>
+          }>
+          id?: string
+          name?: string
+        }
+
+        logger.info(`Processing message type: ${msgObj.type}`)
+
+        // Determine role based on message type
+        let role = 'assistant'
+        if (msgObj.type === 'human') {
+          role = 'user'
+          logger.info(`  -> Classified as USER message`)
+        } else if (msgObj.type === 'ai' || msgObj.type === 'AIMessage') {
+          role = 'assistant'
+          logger.info(`  -> Classified as ASSISTANT message`)
+        } else if (msgObj.type === 'system') {
+          // Skip system messages (internal prompts)
+          logger.info(`  -> SKIPPING system message`)
+          continue
+        } else if (msgObj.type === 'tool') {
+          // Skip tool messages - they're merged into the assistant message tool_calls
+          logger.info(`  -> SKIPPING tool message`)
+          continue
+        } else {
+          logger.warn(`  -> UNKNOWN message type: ${msgObj.type}, defaulting to assistant`)
+        }
+
+        // Extract content
+        let content = ''
+        if (typeof msgObj.content === 'string') {
+          content = msgObj.content
+          logger.info(`  -> Content (string): "${content.slice(0, 100)}${content.length > 100 ? '...' : ''}"`)
+        } else if (Array.isArray(msgObj.content)) {
+          // Handle structured content (e.g., Claude's content blocks)
+          logger.info(`  -> Content is array with ${msgObj.content.length} blocks`)
+          for (const block of msgObj.content) {
+            if (block.type === 'text' && block.text) {
+              content += block.text
+              logger.info(`    -> Extracted text block: "${block.text.slice(0, 50)}..."`)
+            }
+          }
+        } else {
+          logger.warn(`  -> Content is neither string nor array: ${typeof msgObj.content}`)
+        }
+
+        // Extract tool calls if present (for assistant messages)
+        let toolCalls: Array<{
+          id: string
+          name: string
+          input?: Record<string, unknown>
+          output?: unknown
+        }> | undefined
+
+        if (msgObj.tool_calls && msgObj.tool_calls.length > 0) {
+          toolCalls = msgObj.tool_calls.map(tc => {
+            const toolCallId = tc.id || randomUUID()
+            return {
+              id: toolCallId,
+              name: tc.name || 'unknown',
+              input: tc.args,
+              output: toolOutputs.get(toolCallId), // Attach the output from ToolMessage
+            }
+          })
+        }
+
+        // Add formatted message
+        const formattedMsg = {
+          role,
+          content,
+          ...(toolCalls && toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+        }
+        const msgDebugInfo = {
+          role,
+          contentLength: content.length,
+          hasToolCalls: toolCalls && toolCalls.length > 0,
+          toolCallsCount: toolCalls?.length || 0
+        }
+        logger.info(`  -> ADDING formatted message: ${JSON.stringify(msgDebugInfo)}`)
+        formattedMessages.push(formattedMsg)
+      }
+
+      logger.info(`=== FORMATTED MESSAGES ===`)
+      logger.info(`Total formatted: ${formattedMessages.length} messages`)
+      logger.info(`Full messages array: ${JSON.stringify(formattedMessages.map(m => ({
+        role: m.role,
+        contentLength: m.content.length,
+        contentPreview: m.content.slice(0, 50),
+        hasToolCalls: !!m.tool_calls
+      })), null, 2)}`)
+      logger.info(`=== END FORMATTED MESSAGES ===`)
+
+      return formattedMessages
+    } catch (error) {
+      logger.error(`Error getting messages for thread ${threadId}: ${error}`)
+      return []
+    }
   }
 
   /**

@@ -162,8 +162,6 @@ export function activate(context: vscode.ExtensionContext) {
     message: WebviewMessage,
     postMessage: (msg: any) => void
   ) {
-    console.log('[Extension] Received message from webview:', message)
-
     switch (message.type) {
       case 'getUnityProjects': {
         postMessage({ type: 'unityProjectsLoading' })
@@ -364,7 +362,6 @@ export function activate(context: vscode.ExtensionContext) {
         // Return Unity connection status from agent service
         if (agentService) {
           const status = agentService.getUnityStatus()
-          console.log('[Extension] Unity status:', status)
           postMessage({
             type: 'unityStatus',
             status: {
