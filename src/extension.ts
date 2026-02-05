@@ -12,6 +12,11 @@ import {
   isUnityProject,
   type UnityProject,
 } from './services/unity-project-scanner'
+import {
+  AgentService,
+  type ChatRequest,
+  type AgentEvent,
+} from './services/agent-service'
 
 // Types for webview messages
 interface UnityProjectInfo {
@@ -31,12 +36,124 @@ type WebviewMessage =
   | { type: 'clearSelectedProject' }
   | { type: 'browseForProject' }
   | { type: 'checkUnityRunning'; projectPath: string }
+  | { type: 'chat'; messages: Array<{ id: string; role: string; content: string }>; threadId?: string }
+  | { type: 'getUnityStatus' }
+  | { type: 'getThreads' }
+  | { type: 'getThreadMessages'; threadId: string }
+  | { type: 'deleteThread'; threadId: string }
+  | { type: 'getConversationDetails'; threadId: string }
+
+// Global agent service instance
+let agentService: AgentService | null = null
+
+// Output channel for Movesia logs
+let outputChannel: vscode.OutputChannel | null = null
+
+// Key for storing selected project in workspace state
+const SELECTED_PROJECT_KEY = 'movesia.selectedProject'
+
+/**
+ * Log to both console and VS Code Output Channel
+ */
+function log(message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
+  const timestamp = new Date().toISOString().slice(11, 19)
+  const formattedMessage = `[${timestamp}] ${message}`
+
+  // Log to console (Debug Console when debugging)
+  if (level === 'error') {
+    console.error(`[Movesia] ${message}`)
+  } else if (level === 'warn') {
+    console.warn(`[Movesia] ${message}`)
+  } else {
+    console.log(`[Movesia] ${message}`)
+  }
+
+  // Log to Output Channel (visible in Output panel)
+  if (outputChannel) {
+    outputChannel.appendLine(formattedMessage)
+  }
+}
 
 export function activate(context: vscode.ExtensionContext) {
+  // Create Output Channel for Movesia
+  outputChannel = vscode.window.createOutputChannel('Movesia Agent')
+  context.subscriptions.push(outputChannel)
+
+  log('========== EXTENSION ACTIVATING ==========')
+  console.log('[Extension] ========== EXTENSION ACTIVATING ==========')
+
   const installer = createInstaller(context.extensionPath)
 
-  // Key for storing selected project in workspace state
-  const SELECTED_PROJECT_KEY = 'movesia.selectedProject'
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // AGENT INITIALIZATION - Start immediately on extension activation
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Initialize the agent service.
+   * Called immediately when extension activates - does not require a project path.
+   */
+  async function initializeAgentService(): Promise<void> {
+    log('Initializing agent service...')
+
+    if (agentService) {
+      log('Agent service already exists')
+      return
+    }
+
+    // Check if we have a previously selected project
+    const savedProjectPath = context.workspaceState.get<string>(SELECTED_PROJECT_KEY)
+    if (savedProjectPath) {
+      log(`Found saved project: ${savedProjectPath}`)
+    }
+
+    agentService = new AgentService({
+      context,
+      projectPath: savedProjectPath, // Can be undefined - agent will start without it
+      wsPort: 8765, // Unity WebSocket port
+      outputChannel: outputChannel ?? undefined,
+    })
+
+    await agentService.initialize()
+    log('✅ Agent service initialized successfully')
+
+    // If we have a saved project, set it
+    if (savedProjectPath && fs.existsSync(savedProjectPath)) {
+      log(`Restoring project path: ${savedProjectPath}`)
+      await agentService.setProjectPath(savedProjectPath)
+    }
+  }
+
+  /**
+   * Get the agent service, ensuring it's initialized.
+   */
+  function getAgentService(): AgentService {
+    if (!agentService) {
+      throw new Error('Agent service not initialized')
+    }
+    return agentService
+  }
+
+  /**
+   * Set the project path on the agent service.
+   * Called when user selects a project.
+   */
+  async function setAgentProjectPath(projectPath: string): Promise<void> {
+    const service = getAgentService()
+    await service.setProjectPath(projectPath)
+    // Also save to workspace state for persistence
+    await context.workspaceState.update(SELECTED_PROJECT_KEY, projectPath)
+  }
+
+  // Start agent initialization immediately (non-blocking)
+  log('Starting agent initialization...')
+  initializeAgentService()
+    .then(() => {
+      log('✅ Agent service initialization complete')
+    })
+    .catch(err => {
+      log(`❌ Failed to initialize agent service: ${err?.message}`, 'error')
+      console.error('[Extension] Error stack:', err?.stack)
+    })
 
   /**
    * Handle messages from the webview
@@ -116,8 +233,17 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       case 'setSelectedProject': {
+        // Update both workspace state and agent service
+        console.log('[Extension] Setting selected project:', message.projectPath)
         await context.workspaceState.update(SELECTED_PROJECT_KEY, message.projectPath)
+        if (agentService) {
+          console.log('[Extension] Updating agent service with new project path')
+          await agentService.setProjectPath(message.projectPath)
+        } else {
+          console.warn('[Extension] Agent service not available - project path saved but not applied to agent')
+        }
         postMessage({ type: 'selectedProject', projectPath: message.projectPath })
+        console.log('[Extension] Project selection complete')
         break
       }
 
@@ -179,6 +305,172 @@ export function activate(context: vscode.ExtensionContext) {
           projectPath: message.projectPath,
           isRunning,
         })
+        break
+      }
+
+      case 'chat': {
+        // Handle chat messages - stream agent response back to webview
+        if (!agentService) {
+          postMessage({
+            type: 'agentEvent',
+            event: { type: 'error', errorText: 'Agent not initialized. Please wait and try again.' },
+          })
+          postMessage({ type: 'agentEvent', event: { type: 'done' } })
+          return
+        }
+
+        // Check if project is selected (optional - agent can work without it but Unity tools won't work)
+        const projectPath = context.workspaceState.get<string>(SELECTED_PROJECT_KEY)
+        if (!projectPath) {
+          postMessage({
+            type: 'agentEvent',
+            event: { type: 'error', errorText: 'No project selected. Please select a Unity project first.' },
+          })
+          postMessage({ type: 'agentEvent', event: { type: 'done' } })
+          return
+        }
+
+        try {
+          const chatRequest: ChatRequest = {
+            type: 'chat',
+            messages: message.messages.map(m => ({
+              id: m.id,
+              role: m.role as 'user' | 'assistant',
+              content: m.content,
+            })),
+            threadId: message.threadId,
+          }
+
+          const result = await agentService.handleChat(chatRequest, (event: AgentEvent) => {
+            // Stream each event to the webview
+            postMessage({ type: 'agentEvent', event })
+          })
+
+          // Send thread ID back for tracking
+          postMessage({ type: 'chatThreadId', threadId: result.threadId })
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+          console.error('[Extension] Chat error:', errorMessage)
+          postMessage({
+            type: 'agentEvent',
+            event: { type: 'error', errorText: errorMessage },
+          })
+          postMessage({ type: 'agentEvent', event: { type: 'done' } })
+        }
+        break
+      }
+
+      case 'getUnityStatus': {
+        // Return Unity connection status from agent service
+        if (agentService) {
+          const status = agentService.getUnityStatus()
+          console.log('[Extension] Unity status:', status)
+          postMessage({
+            type: 'unityStatus',
+            status: {
+              status: status.connected ? 'connected' : 'disconnected',
+              project: status.projectPath || null,
+              compiling: status.isCompiling,
+              connections: status.connected ? 1 : 0,
+            },
+          })
+        } else {
+          console.log('[Extension] Unity status requested but agent service not available')
+          postMessage({
+            type: 'unityStatus',
+            status: {
+              status: 'disconnected',
+              project: null,
+              compiling: false,
+              connections: 0,
+            },
+          })
+        }
+        break
+      }
+
+      case 'getThreads': {
+        // List all conversation threads
+        if (agentService) {
+          try {
+            const threads = await agentService.listThreads()
+            postMessage({ type: 'threadsLoaded', threads })
+          } catch (err) {
+            console.error('[Extension] Error loading threads:', err)
+            postMessage({ type: 'threadsLoaded', threads: [] })
+          }
+        } else {
+          postMessage({ type: 'threadsLoaded', threads: [] })
+        }
+        break
+      }
+
+      case 'getThreadMessages': {
+        // Get messages for a specific thread
+        if (agentService) {
+          try {
+            const messages = await agentService.getThreadMessages(message.threadId)
+            postMessage({
+              type: 'threadMessagesLoaded',
+              threadId: message.threadId,
+              messages,
+            })
+          } catch (err) {
+            console.error('[Extension] Error loading thread messages:', err)
+            postMessage({
+              type: 'threadMessagesLoaded',
+              threadId: message.threadId,
+              messages: [],
+            })
+          }
+        } else {
+          postMessage({
+            type: 'threadMessagesLoaded',
+            threadId: message.threadId,
+            messages: [],
+          })
+        }
+        break
+      }
+
+      case 'deleteThread': {
+        // Delete a conversation thread
+        if (agentService) {
+          try {
+            await agentService.deleteThread(message.threadId)
+            postMessage({ type: 'threadDeleted', threadId: message.threadId })
+          } catch (err) {
+            console.error('[Extension] Error deleting thread:', err)
+          }
+        }
+        break
+      }
+
+      case 'getConversationDetails': {
+        // Get conversation details (title, etc.)
+        if (agentService) {
+          try {
+            const conversation = await agentService.getConversation(message.threadId)
+            postMessage({
+              type: 'conversationDetails',
+              threadId: message.threadId,
+              title: conversation?.title || null,
+            })
+          } catch (err) {
+            console.error('[Extension] Error getting conversation details:', err)
+            postMessage({
+              type: 'conversationDetails',
+              threadId: message.threadId,
+              title: null,
+            })
+          }
+        } else {
+          postMessage({
+            type: 'conversationDetails',
+            threadId: message.threadId,
+            title: null,
+          })
+        }
         break
       }
     }
@@ -419,4 +711,16 @@ async function selectUnityProject(): Promise<string | undefined> {
   }
 
   return selected.projectPath
+}
+
+/**
+ * Extension deactivation - cleanup agent service
+ */
+export async function deactivate() {
+  console.log('[Extension] Deactivating Movesia extension...')
+  if (agentService) {
+    await agentService.shutdown()
+    agentService = null
+  }
+  console.log('[Extension] Movesia extension deactivated')
 }

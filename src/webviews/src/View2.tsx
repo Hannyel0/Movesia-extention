@@ -1,5 +1,5 @@
 import React, { FunctionComponent } from 'react'
-import { GoMarkGithub } from 'react-icons/go'
+import { SiGithub } from 'react-icons/si'
 import { useShallow } from 'zustand/react/shallow'
 import useAppState from './appState'
 import Toggle from './lib/components/Toggle'
@@ -16,7 +16,7 @@ const View2: FunctionComponent<View2Props> = props => {
   return (
     <div>
       <h1>
-        <GoMarkGithub /> View2
+        <SiGithub /> View2
         <Toggle
           checked={toggle1}
           label="Toggle 1"

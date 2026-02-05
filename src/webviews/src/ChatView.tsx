@@ -1,7 +1,5 @@
 import React, { useRef, useEffect, useState, memo, useCallback } from 'react'
-import { useChat } from '@ai-sdk/react'
 import { useNavigate } from 'react-router-dom'
-import type { UIMessage } from 'ai'
 import { Loader2, Sparkles, Settings, StopCircle, FolderSync } from 'lucide-react'
 import { Button } from './lib/components/ui/button'
 import { cn } from './lib/utils'
@@ -16,10 +14,10 @@ import {
   getToolRegistration,
   getToolUIComponent,
 } from './lib/components/tools'
-import type { ToolUIProps } from './lib/components/tools'
+import type { ToolUIProps, ToolCallData } from './lib/components/tools'
 
-// Extracted modules
-import { createUIMessageChunkStream } from './lib/streaming/sseParser'
+// Hooks
+import { useChatState, type ChatMessage, type ToolCallEvent } from './lib/hooks/useChatState'
 import { useToolCalls } from './lib/hooks/useToolCalls'
 import { useThreads } from './lib/hooks/useThreads'
 import { useSelectedProject } from './lib/hooks/useSelectedProject'
@@ -32,9 +30,6 @@ import type { ProjectResponseType } from './lib/types/project'
 // Initialize custom tool UIs on module load
 ensureCustomToolUIsRegistered()
 
-// Configuration
-const API_BASE_URL = 'http://127.0.0.1:8765'
-
 // Debug logging helper
 const DEBUG = true
 function log(category: string, message: string, data?: unknown) {
@@ -46,15 +41,6 @@ function log(category: string, message: string, data?: unknown) {
       console.log(`[${timestamp}] [${category}] ${message}`)
     }
   }
-}
-
-// Helper function to extract text content from UIMessage parts
-function getMessageTextContent(msg: UIMessage): string {
-  if (!msg.parts) return ''
-  return msg.parts
-    .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
-    .map(part => part.text)
-    .join('')
 }
 
 function ChatView() {
@@ -121,12 +107,12 @@ function ChatView() {
 
         // Now make the decision based on actual response
         if (!message.isRunning) {
-          console.log('[ChatView] ❌ Unity not open (Temp folder missing), redirecting to install screen')
+          console.log('[ChatView] Unity not open (Temp folder missing), redirecting to install screen')
           navigate('/installPackage', {
             state: { projectPath: selectedProjectPath },
           })
         } else {
-          console.log('[ChatView] ✅ Unity is open, staying on chat')
+          console.log('[ChatView] Unity is open, staying on chat')
           setIsInitializing(false)
         }
       }
@@ -148,118 +134,79 @@ function ChatView() {
     }
   }, [selectedProjectPath, isLoadingProject, navigate])
 
-  // We need a ref to store handleToolCallEvent since it's used in the transport
-  // but the transport is defined before we have access to the hook
+  // Ref to store tool call event handler for the chat hook
   const toolCallEventHandlerRef = useRef<
-    ((event: Parameters<typeof handleToolCallEvent>[0], messageId: string) => void) | null
+    ((event: ToolCallEvent, messageId: string) => void) | null
   >(null)
 
-  // Vercel AI SDK v6 useChat hook with custom transport
-  const { messages, setMessages, status, error, sendMessage, stop } = useChat({
-    // Custom transport for our Python backend
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    transport: {
-      sendMessages: async ({ messages: chatMessages, abortSignal }) => {
-        // Use ref to get current threadId (avoids stale closure)
-        const currentThreadId = threadIdRef.current
-
-        log('Transport', '='.repeat(50))
-        log('Transport', 'sendMessages called', {
-          messageCount: chatMessages.length,
-          threadId: currentThreadId,
-        })
-
-        const requestBody = {
-          messages: chatMessages.map(msg => ({
-            id: msg.id,
-            role: msg.role,
-            content: getMessageTextContent(msg),
-          })),
-          threadId: currentThreadId,
-        }
-
-        log('Transport', 'Request body', requestBody)
-
-        try {
-          log('Transport', `Fetching ${API_BASE_URL}/api/chat`)
-          const response = await fetch(`${API_BASE_URL}/api/chat`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(currentThreadId ? { 'x-thread-id': currentThreadId } : {}),
-            },
-            body: JSON.stringify(requestBody),
-            signal: abortSignal,
-          })
-
-          log('Transport', `Response status: ${response.status}`)
-          log('Transport', 'Response headers', Object.fromEntries(response.headers.entries()))
-
-          // Capture thread ID from response headers
-          const newThreadId = response.headers.get('x-thread-id')
-          log('Transport', `x-thread-id header value: ${newThreadId}`)
-          if (newThreadId && newThreadId !== currentThreadId) {
-            log('Transport', `New thread ID received: ${newThreadId}`)
-            setThreadId(newThreadId)
-            // Fetch conversation details to get the title
-            fetchConversationDetails(newThreadId)
-          } else if (!newThreadId) {
-            log('Transport', 'WARNING: No x-thread-id header in response!')
-          }
-
-          if (!response.ok) {
-            const errorText = await response.text()
-            log('Transport', `HTTP error: ${response.status}`, errorText)
-            throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`)
-          }
-
-          log('Transport', 'Creating SSE stream...')
-          // Parse SSE and return UIMessageChunk stream
-          // Pass tool call event handler to extract tool calls from stream
-          return createUIMessageChunkStream(
-            response,
-            toolCallEventHandlerRef.current || undefined
-          )
-        } catch (err) {
-          log('Transport', 'Fetch error', err)
-          throw err
-        }
-      },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any,
-  })
-
-  // Now we can use our custom hooks with the AI SDK values
-  const { handleToolCallEvent, clearToolCalls, loadToolCalls, getToolCallsForMessage } = useToolCalls({
-    status,
-    messages,
-  })
-
-  // Store the handler in ref for the transport to use
-  toolCallEventHandlerRef.current = handleToolCallEvent
-
-  // Ref to always have access to current threadId in transport closure
-  const threadIdRef = useRef<string | null>(null)
-
+  // Custom chat state hook (replaces AI SDK useChat)
   const {
+    messages,
+    setMessages,
+    status,
+    error,
+    sendMessage,
+    stop,
     threadId,
     setThreadId,
+    isLoading,
+  } = useChatState({
+    onToolCallEvent: (event, messageId) => {
+      // Forward to the tool calls hook
+      if (toolCallEventHandlerRef.current) {
+        // Convert to the format expected by useToolCalls
+        toolCallEventHandlerRef.current(event, messageId)
+      }
+    },
+  })
+
+  // Tool calls management hook
+  const { handleToolCallEvent, clearToolCalls, loadToolCalls, getToolCallsForMessage } = useToolCalls({
+    status,
+    messages: messages as Array<{ role: string }>,
+  })
+
+  // Store the handler in ref for the chat hook to use
+  toolCallEventHandlerRef.current = handleToolCallEvent
+
+  // Use threads hook for thread management
+  const {
+    threadId: threadsThreadId,
+    setThreadId: threadsSetThreadId,
     threads,
     handleSelectThread,
     handleNewThread,
     handleDeleteThread,
     fetchConversationDetails,
   } = useThreads({
-    apiBaseUrl: API_BASE_URL,
-    setMessages,
+    setMessages: (msgs) => {
+      // Convert from thread format to our ChatMessage format
+      const chatMessages: ChatMessage[] = msgs.map(m => ({
+        id: m.id,
+        role: m.role as 'user' | 'assistant',
+        content: m.parts
+          ?.filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+          .map(p => p.text)
+          .join('') || '',
+      }))
+      setMessages(chatMessages)
+    },
     onClearToolCalls: clearToolCalls,
     onLoadToolCalls: loadToolCalls,
   })
 
-  // Keep ref in sync with state
-  threadIdRef.current = threadId
+  // Sync thread ID from chat hook with useThreads hook
+  useEffect(() => {
+    if (threadId && threadId !== threadsThreadId) {
+      threadsSetThreadId(threadId)
+      fetchConversationDetails(threadId)
+    }
+  }, [threadId, threadsThreadId, threadsSetThreadId, fetchConversationDetails])
 
-  log('Component', 'ChatView render', { threadId, inputValue: inputValue.slice(0, 20) })
+  // Use threadId from chat hook if available, otherwise from threads hook
+  const effectiveThreadId = threadId || threadsThreadId
+
+  log('Component', 'ChatView render', { threadId: effectiveThreadId, inputValue: inputValue.slice(0, 20) })
 
   // Log error changes
   useEffect(() => {
@@ -276,9 +223,6 @@ function ChatView() {
       prevMessageCountRef.current = messages.length
     }
   }, [messages])
-
-  // Derive loading state from status
-  const isLoading = status === 'streaming' || status === 'submitted'
 
   // Auto-scroll to bottom when new messages arrive or content updates
   useEffect(() => {
@@ -301,11 +245,7 @@ function ChatView() {
     setInputValue('')
 
     try {
-      // Send message using AI SDK v6 API with parts
-      await sendMessage({
-        role: 'user',
-        parts: [{ type: 'text', text: messageContent }],
-      })
+      sendMessage(messageContent)
       log('Send', 'sendMessage completed')
     } catch (err) {
       log('Send', 'sendMessage error', err)
@@ -320,10 +260,7 @@ function ChatView() {
       }
       log('Suggestion', `Clicking suggestion: "${text}"`)
       try {
-        await sendMessage({
-          role: 'user',
-          parts: [{ type: 'text', text }],
-        })
+        sendMessage(text)
       } catch (err) {
         log('Suggestion', 'Error', err)
       }
@@ -335,19 +272,18 @@ function ChatView() {
     log('Clear', 'Clearing chat')
     setMessages([])
     setThreadId(null)
+    threadsSetThreadId(null)
     clearToolCalls()
-  }, [setMessages, setThreadId, clearToolCalls])
+  }, [setMessages, setThreadId, threadsSetThreadId, clearToolCalls])
 
   const handleStop = useCallback(() => {
     log('Stop', 'Stopping generation')
     stop()
   }, [stop])
 
-  // Convert AI SDK v6 UIMessage to display format with interleaved segments
+  // Convert messages to display format with interleaved segments
   const displayMessages: DisplayMessage[] = messages.map((msg, index) => {
-    const textContent = getMessageTextContent(msg)
-
-    let toolCallArray: DisplayMessage['toolCalls'] = []
+    let toolCallArray: ToolCallData[] = []
     let segments: MessageSegment[] | undefined
 
     if (msg.role === 'assistant') {
@@ -362,15 +298,15 @@ function ChatView() {
       toolCallArray = getToolCallsForMessage(assistantIndex, isLastAssistant)
 
       // Generate interleaved segments for rendering
-      if (toolCallArray.length > 0 || textContent) {
-        segments = generateMessageSegments(textContent, toolCallArray)
+      if (toolCallArray.length > 0 || msg.content) {
+        segments = generateMessageSegments(msg.content, toolCallArray)
       }
     }
 
     return {
       id: msg.id,
-      role: msg.role as 'user' | 'assistant',
-      content: textContent,
+      role: msg.role,
+      content: msg.content,
       toolCalls: toolCallArray.length > 0 ? toolCallArray : undefined,
       segments,
     }
@@ -391,10 +327,10 @@ function ChatView() {
       {/* Header */}
       <header className="flex items-center justify-between px-3 py-2 border-b border-border">
         <div className="flex items-center gap-1">
-          <UnityStatusIndicator apiBaseUrl={API_BASE_URL} />
+          <UnityStatusIndicator />
           <ThreadSelector
             threads={threads}
-            currentThreadId={threadId}
+            currentThreadId={effectiveThreadId}
             onSelectThread={handleSelectThread}
             onNewThread={handleNewThread}
             onDeleteThread={handleDeleteThread}
@@ -461,12 +397,8 @@ interface ChatMessageProps {
 
 /**
  * Renders a tool call UI, checking if it should use full custom mode.
- *
- * Full custom mode (fullCustom: true in registration) renders the component
- * directly without the standard ToolUIWrapper, giving complete control over
- * the visual presentation.
  */
-function ToolRenderer({ tool }: { tool: import('./lib/components/tools').ToolCallData }) {
+function ToolRenderer({ tool }: { tool: ToolCallData }) {
   const registration = getToolRegistration(tool.name)
   const CustomComponent = getToolUIComponent(tool.name)
 

@@ -42,8 +42,6 @@ const statusTooltip: Record<ConnectionState, string> = {
 interface UnityStatusIndicatorProps {
   /** Custom class name for the container */
   className?: string
-  /** API base URL (default: http://127.0.0.1:8765) */
-  apiBaseUrl?: string
   /** Polling interval in ms (default: 2000) */
   pollInterval?: number
 }
@@ -60,11 +58,9 @@ interface UnityStatusIndicatorProps {
  */
 export function UnityStatusIndicator({
   className,
-  apiBaseUrl,
   pollInterval = 2000,
 }: UnityStatusIndicatorProps) {
   const { status, connectionState, isLoading } = useUnityStatus({
-    apiBaseUrl,
     pollInterval,
   })
 

@@ -5,7 +5,7 @@
   "main": "out/extension.js",
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "node --max-old-space-size=8192 node_modules/typescript/bin/tsc -p ./",
     "lint": "eslint . --ext .ts,.tsx",
     "watch": "tsc -watch -p ./",
     "format": "prettier --write **/*.ts",
@@ -29,11 +29,12 @@
   "homepage": "https://github.com/githubnext/vscode-react-webviews.git#readme",
   "devDependencies": {
     "@githubocto/tailwind-vscode": "^1.0.4",
-    "@types/node": "^16.4.13",
+    "@types/node": "^20.19.32",
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
     "@types/tailwindcss": "^2.2.1",
     "@types/vscode": "^1.59.0",
+    "@types/ws": "^8.5.12",
     "@typescript-eslint/eslint-plugin": "^5.1.0",
     "@typescript-eslint/parser": "^5.1.0",
     "@vitejs/plugin-react": "^5.1.2",
@@ -46,16 +47,21 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@ai-sdk/react": "^3.0.59",
     "@hediet/node-reload": "^0.7.3",
+    "@langchain/community": "^1.0.0",
+    "@langchain/core": "^1.1.15",
+    "@langchain/langgraph": "^1.1.3",
+    "@langchain/langgraph-checkpoint": "^1.0.0",
+    "@langchain/openai": "^1.0.0",
+    "@langchain/tavily": "^1.2.0",
     "@radix-ui/react-avatar": "^1.1.11",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-scroll-area": "^1.2.10",
     "@radix-ui/react-slot": "^1.2.4",
-    "ai": "^6.0.57",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dotenv": "^17.2.3",
     "history": "^5.0.1",
     "lucide-react": "^0.563.0",
     "nanoid": "^3.1.23",
@@ -68,20 +74,20 @@
     "react-router-dom": "^6.30.3",
     "react-shiki": "^0.9.1",
     "remark-gfm": "^4.0.1",
+    "sql.js": "^1.13.0",
     "tailwind-merge": "^3.4.0",
     "tailwindcss-animate": "^1.0.7",
     "vite": "^5.4.21",
-    "zod": "^4.3.6",
+    "ws": "^8.18.0",
+    "zod": "3.25.67",
     "zustand": "^5.0.10"
   },
+  "overrides": {
+    "zod": "3.25.67",
+    "@langchain/core": "^1.1.15"
+  },
   "activationEvents": [
-    "onCommand:NextWebview1.start",
-    "onCommand:NextWebview2.start",
-    "onCommand:movesia.installUnityPackage",
-    "onCommand:movesia.checkUnityPackage",
-    "onCommand:movesia.uninstallUnityPackage",
-    "onCommand:movesia.findUnityProjects",
-    "onCommand:movesia.selectUnityProject"
+    "onStartupFinished"
   ],
   "contributes": {
     "commands": [

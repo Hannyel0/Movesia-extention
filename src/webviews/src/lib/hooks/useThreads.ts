@@ -1,7 +1,8 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import type { Thread } from '../components/ThreadSelector'
-import type { UIMessage } from 'ai'
-import type { ToolCallData } from '../components/ToolCall'
+import type { ToolCallData } from '../components/tools'
+import type { ChatMessage } from './useChatState'
+import VSCodeAPI from '../VSCodeAPI'
 
 // Debug logging helper
 const DEBUG = true
@@ -31,10 +32,8 @@ interface MessageApiResponse {
 }
 
 interface UseThreadsOptions {
-  /** Base URL for the API */
-  apiBaseUrl: string
-  /** Callback to set messages in the AI SDK */
-  setMessages: (messages: UIMessage[]) => void
+  /** Callback to set messages in the chat state */
+  setMessages: (messages: ChatMessage[]) => void
   /** Callback when tool calls should be cleared */
   onClearToolCalls?: () => void
   /** Callback to load tool calls from persistence */
@@ -49,27 +48,26 @@ interface UseThreadsReturn {
   /** List of all threads */
   threads: Thread[]
   /** Handle selecting a thread */
-  handleSelectThread: (id: string) => Promise<void>
+  handleSelectThread: (id: string) => void
   /** Handle creating a new thread */
   handleNewThread: () => void
   /** Handle deleting a thread */
-  handleDeleteThread: (id: string) => Promise<void>
+  handleDeleteThread: (id: string) => void
   /** Fetch conversation details and update thread title */
-  fetchConversationDetails: (id: string) => Promise<void>
+  fetchConversationDetails: (id: string) => void
 }
 
 /**
- * Hook to manage thread/conversation state.
+ * Hook to manage thread/conversation state via VS Code postMessage.
  *
  * Handles:
- * - Loading threads from backend on mount
+ * - Loading threads from agent service on mount
  * - Selecting threads and loading their messages
  * - Creating new threads
  * - Deleting threads
  * - Updating thread titles from conversation details
  */
 export function useThreads({
-  apiBaseUrl,
   setMessages,
   onClearToolCalls,
   onLoadToolCalls,
@@ -77,161 +75,150 @@ export function useThreads({
   const [threadId, setThreadId] = useState<string | null>(null)
   const [threads, setThreads] = useState<Thread[]>([])
 
-  // Fetch conversation details from backend and add to threads list
-  const fetchConversationDetails = useCallback(
-    async (id: string) => {
-      log('Thread', `>>> fetchConversationDetails called with id: ${id}`)
-      try {
-        const url = `${apiBaseUrl}/api/conversations/${id}`
-        log('Thread', `Fetching: ${url}`)
-        const response = await fetch(url)
+  // Track pending operations to associate responses with requests
+  const pendingSelectRef = useRef<string | null>(null)
+  const pendingDetailsRef = useRef<string | null>(null)
 
-        log('Thread', `Response status: ${response.status}`)
-
-        if (!response.ok) {
-          const errorText = await response.text()
-          log('Thread', `Failed to fetch conversation: ${response.status}`, errorText)
-          return
-        }
-
-        const data = await response.json()
-        log('Thread', 'Conversation details received', data)
-
-        const title = data.conversation?.title || 'New Chat'
-        log('Thread', `Extracted title: "${title}"`)
-
-        // Add the new thread to the list (or update if exists)
-        setThreads(prev => {
-          log('Thread', `setThreads called, prev threads count: ${prev.length}`, prev)
-          const exists = prev.some(t => t.id === id)
-          log('Thread', `Thread ${id} exists: ${exists}`)
-
-          let newThreads: Thread[]
-          if (exists) {
-            newThreads = prev.map(t => (t.id === id ? { ...t, title } : t))
-          } else {
-            newThreads = [
-              {
-                id,
-                title,
-                createdAt: new Date(),
-                messageCount: 1,
-              },
-              ...prev,
-            ]
-          }
-          log('Thread', `New threads count: ${newThreads.length}`, newThreads)
-          return newThreads
-        })
-      } catch (err) {
-        log('Thread', 'Error fetching conversation details', err)
-      }
-    },
-    [apiBaseUrl]
-  )
-
-  // Fetch threads from backend on mount
+  // Set up message listener for responses from extension
   useEffect(() => {
-    const fetchThreads = async () => {
-      try {
-        log('Threads', 'Fetching threads from backend...')
-        const response = await fetch(`${apiBaseUrl}/api/conversations`)
-        if (!response.ok) {
-          log('Threads', `Failed to fetch threads: ${response.status}`)
-          return
-        }
-        const data = await response.json()
-        log('Threads', 'Threads fetched from backend', data)
+    const handleMessage = (event: MessageEvent) => {
+      const message = event.data
 
-        const loadedThreads: Thread[] = data.conversations.map(
-          (conv: { session_id: string; title: string | null; created_at: string }) => ({
-            id: conv.session_id,
-            title: conv.title || 'New Chat',
-            createdAt: new Date(conv.created_at),
-            messageCount: 0,
-          })
-        )
+      switch (message.type) {
+        case 'threadsLoaded':
+          // Response to getThreads request
+          log('Threads', 'Threads loaded from backend', message.threads)
+          const loadedThreads: Thread[] = (message.threads || []).map(
+            (conv: { session_id: string; title: string | null; created_at: string }) => ({
+              id: conv.session_id,
+              title: conv.title || 'New Chat',
+              createdAt: new Date(conv.created_at),
+              messageCount: 0,
+            })
+          )
+          setThreads(loadedThreads)
+          log('Threads', `Loaded ${loadedThreads.length} threads from backend`)
+          break
 
-        setThreads(loadedThreads)
-        log('Threads', `Loaded ${loadedThreads.length} threads from backend`)
-      } catch (err) {
-        log('Threads', 'Error fetching threads', err)
+        case 'threadMessagesLoaded':
+          // Response to getThreadMessages request
+          if (message.threadId === pendingSelectRef.current) {
+            pendingSelectRef.current = null
+            const messagesData: MessageApiResponse[] = message.messages || []
+            log('Thread', `Loaded ${messagesData.length} messages`, messagesData)
+
+            // Convert backend messages to ChatMessage format
+            // Also extract tool calls to populate the completedToolCalls map
+            const toolCallsMap = new Map<number, ToolCallData[]>()
+            let assistantIndex = 0
+
+            const chatMessages: ChatMessage[] = messagesData.map((msg, index) => {
+              // If this is an assistant message with tool calls, extract them
+              if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+                const toolCalls: ToolCallData[] = msg.tool_calls.map(tc => ({
+                  id: tc.id,
+                  name: tc.name,
+                  state: 'completed' as const,
+                  input: tc.input,
+                  output: tc.output,
+                }))
+                toolCallsMap.set(assistantIndex, toolCalls)
+                log('Thread', `Extracted ${toolCalls.length} tool calls for assistant message ${assistantIndex}`, toolCalls)
+              }
+
+              // Increment assistant index after processing
+              if (msg.role === 'assistant') {
+                assistantIndex++
+              }
+
+              return {
+                id: `${message.threadId}-${index}`,
+                role: msg.role as 'user' | 'assistant',
+                content: msg.content,
+              }
+            })
+
+            // Load tool calls into the hook state
+            if (toolCallsMap.size > 0 && onLoadToolCalls) {
+              log('Thread', `Loading ${toolCallsMap.size} tool call entries into state`)
+              onLoadToolCalls(toolCallsMap)
+            }
+
+            setMessages(chatMessages)
+            log('Thread', `Set ${chatMessages.length} messages in state`)
+          }
+          break
+
+        case 'threadDeleted':
+          // Response to deleteThread request
+          log('Thread', `Thread deleted: ${message.threadId}`)
+          setThreads(prev => prev.filter(t => t.id !== message.threadId))
+          if (threadId === message.threadId) {
+            setThreadId(null)
+            setMessages([])
+          }
+          break
+
+        case 'conversationDetails':
+          // Response to getConversationDetails request
+          if (message.threadId === pendingDetailsRef.current) {
+            pendingDetailsRef.current = null
+            const title = message.title || 'New Chat'
+            log('Thread', `Conversation details received, title: "${title}"`)
+
+            // Add the new thread to the list (or update if exists)
+            setThreads(prev => {
+              const exists = prev.some(t => t.id === message.threadId)
+              if (exists) {
+                return prev.map(t => (t.id === message.threadId ? { ...t, title } : t))
+              } else {
+                return [
+                  {
+                    id: message.threadId,
+                    title,
+                    createdAt: new Date(),
+                    messageCount: 1,
+                  },
+                  ...prev,
+                ]
+              }
+            })
+          }
+          break
       }
     }
 
-    fetchThreads()
-  }, [apiBaseUrl])
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [setMessages, onLoadToolCalls, threadId])
 
-  // Log threads changes
+  // Fetch threads from backend on mount
   useEffect(() => {
-    log('Threads', `Threads state updated, count: ${threads.length}`, threads)
-  }, [threads])
+    log('Threads', 'Requesting threads from backend...')
+    VSCodeAPI.postMessage({ type: 'getThreads' })
+  }, [])
+
+  // Fetch conversation details from backend and add to threads list
+  const fetchConversationDetails = useCallback((id: string) => {
+    log('Thread', `>>> fetchConversationDetails called with id: ${id}`)
+    pendingDetailsRef.current = id
+    VSCodeAPI.postMessage({ type: 'getConversationDetails', threadId: id })
+  }, [])
 
   // Handle selecting a thread
   const handleSelectThread = useCallback(
-    async (id: string) => {
+    (id: string) => {
       log('Thread', `Selected thread: ${id}`)
       setThreadId(id)
       // Clear tool call tracking when switching threads
       onClearToolCalls?.()
 
-      // Load messages for this thread from backend
-      try {
-        log('Thread', `Fetching messages for thread: ${id}`)
-        const response = await fetch(`${apiBaseUrl}/api/conversations/${id}/messages`)
-
-        if (!response.ok) {
-          log('Thread', `Failed to fetch messages: ${response.status}`)
-          return
-        }
-
-        const messagesData: MessageApiResponse[] = await response.json()
-        log('Thread', `Loaded ${messagesData.length} messages`, messagesData)
-
-        // Convert backend messages to UIMessage format for the AI SDK
-        // Also extract tool calls to populate the completedToolCalls map
-        const toolCallsMap = new Map<number, ToolCallData[]>()
-        let assistantIndex = 0
-
-        const uiMessages: UIMessage[] = messagesData.map((msg, index) => {
-          // If this is an assistant message with tool calls, extract them
-          if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
-            const toolCalls: ToolCallData[] = msg.tool_calls.map(tc => ({
-              id: tc.id,
-              name: tc.name,
-              state: 'completed' as const,
-              input: tc.input,
-              output: tc.output,
-            }))
-            toolCallsMap.set(assistantIndex, toolCalls)
-            log('Thread', `Extracted ${toolCalls.length} tool calls for assistant message ${assistantIndex}`, toolCalls)
-          }
-
-          // Increment assistant index after processing
-          if (msg.role === 'assistant') {
-            assistantIndex++
-          }
-
-          return {
-            id: `${id}-${index}`,
-            role: msg.role as 'user' | 'assistant',
-            parts: [{ type: 'text' as const, text: msg.content }],
-          }
-        })
-
-        // Load tool calls into the hook state
-        if (toolCallsMap.size > 0 && onLoadToolCalls) {
-          log('Thread', `Loading ${toolCallsMap.size} tool call entries into state`)
-          onLoadToolCalls(toolCallsMap)
-        }
-
-        setMessages(uiMessages)
-        log('Thread', `Set ${uiMessages.length} messages in state`)
-      } catch (err) {
-        log('Thread', 'Error fetching thread messages', err)
-      }
+      // Request messages for this thread from backend
+      log('Thread', `Requesting messages for thread: ${id}`)
+      pendingSelectRef.current = id
+      VSCodeAPI.postMessage({ type: 'getThreadMessages', threadId: id })
     },
-    [apiBaseUrl, setMessages, onClearToolCalls, onLoadToolCalls]
+    [onClearToolCalls]
   )
 
   // Handle creating a new thread
@@ -243,34 +230,10 @@ export function useThreads({
   }, [setMessages, onClearToolCalls])
 
   // Handle deleting a thread
-  const handleDeleteThread = useCallback(
-    async (id: string) => {
-      log('Thread', `Deleting thread: ${id}`)
-
-      // Delete from backend
-      try {
-        const response = await fetch(`${apiBaseUrl}/api/conversations/${id}`, {
-          method: 'DELETE',
-        })
-
-        if (!response.ok) {
-          log('Thread', `Failed to delete thread from backend: ${response.status}`)
-        } else {
-          log('Thread', `Thread deleted from backend: ${id}`)
-        }
-      } catch (err) {
-        log('Thread', 'Error deleting thread from backend', err)
-      }
-
-      // Update local state
-      setThreads(prev => prev.filter(t => t.id !== id))
-      if (threadId === id) {
-        setThreadId(null)
-        setMessages([])
-      }
-    },
-    [apiBaseUrl, threadId, setMessages]
-  )
+  const handleDeleteThread = useCallback((id: string) => {
+    log('Thread', `Deleting thread: ${id}`)
+    VSCodeAPI.postMessage({ type: 'deleteThread', threadId: id })
+  }, [])
 
   return {
     threadId,

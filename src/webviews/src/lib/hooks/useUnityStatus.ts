@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
+import VSCodeAPI from '../VSCodeAPI'
 
 /**
- * Unity connection status returned from the backend.
+ * Unity connection status returned from the agent service.
  */
 export interface UnityStatus {
   /** Connection status: "connected" or "disconnected" */
@@ -20,8 +21,6 @@ export interface UnityStatus {
 export type ConnectionState = 'connected' | 'compiling' | 'disconnected' | 'error'
 
 interface UseUnityStatusOptions {
-  /** Base URL for the API (default: http://127.0.0.1:8765) */
-  apiBaseUrl?: string
   /** Polling interval in milliseconds (default: 2000) */
   pollInterval?: number
   /** Whether polling is enabled (default: true) */
@@ -38,14 +37,14 @@ interface UseUnityStatusReturn {
   /** Error message if fetch failed */
   error: string | null
   /** Manually trigger a status refresh */
-  refresh: () => Promise<void>
+  refresh: () => void
 }
 
 /**
- * Hook to poll Unity connection status from the backend.
+ * Hook to get Unity connection status via VS Code postMessage.
  *
- * Polls the /unity/status endpoint every `pollInterval` ms and returns
- * the connection state for rendering a status indicator.
+ * Sends 'getUnityStatus' message to extension and receives 'unityStatus' response.
+ * Polls at the specified interval.
  *
  * @example
  * ```tsx
@@ -56,7 +55,6 @@ interface UseUnityStatusReturn {
  * ```
  */
 export function useUnityStatus({
-  apiBaseUrl = 'http://127.0.0.1:8765',
   pollInterval = 2000,
   enabled = true,
 }: UseUnityStatusOptions = {}): UseUnityStatusReturn {
@@ -64,41 +62,42 @@ export function useUnityStatus({
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchStatus = useCallback(async () => {
-    try {
-      const response = await fetch(`${apiBaseUrl}/unity/status`)
+  const requestStatus = useCallback(() => {
+    VSCodeAPI.postMessage({ type: 'getUnityStatus' })
+  }, [])
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
-      }
-
-      const data: UnityStatus = await response.json()
-      setStatus(data)
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch status')
-      // Keep the last known status on error, but mark as error state
-    } finally {
-      setIsLoading(false)
-    }
-  }, [apiBaseUrl])
-
-  // Initial fetch and polling
+  // Listen for status responses from extension
   useEffect(() => {
     if (!enabled) {
       return
     }
 
-    // Fetch immediately on mount
-    fetchStatus()
+    const handleMessage = (event: MessageEvent) => {
+      const message = event.data
+
+      if (message.type === 'unityStatus') {
+        setStatus(message.status)
+        setError(null)
+        setIsLoading(false)
+      } else if (message.type === 'unityStatusError') {
+        setError(message.error || 'Failed to get Unity status')
+        setIsLoading(false)
+      }
+    }
+
+    window.addEventListener('message', handleMessage)
+
+    // Request immediately on mount
+    requestStatus()
 
     // Set up polling interval
-    const intervalId = setInterval(fetchStatus, pollInterval)
+    const intervalId = setInterval(requestStatus, pollInterval)
 
     return () => {
+      window.removeEventListener('message', handleMessage)
       clearInterval(intervalId)
     }
-  }, [fetchStatus, pollInterval, enabled])
+  }, [requestStatus, pollInterval, enabled])
 
   // Derive the connection state for UI
   const connectionState: ConnectionState = (() => {
@@ -114,6 +113,6 @@ export function useUnityStatus({
     connectionState,
     isLoading,
     error,
-    refresh: fetchStatus,
+    refresh: requestStatus,
   }
 }
