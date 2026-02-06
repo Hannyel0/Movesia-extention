@@ -115,12 +115,14 @@ export async function initDatabase(): Promise<SqlJsDatabase> {
     _db.run(CONVERSATIONS_SCHEMA);
     logger.info('Database tables created/verified');
 
-    // Persist initial state
-    persistDatabase();
+    // Initialize LangGraph checkpoint saver using the SAME db instance.
+    // This avoids the dual-instance bug where two in-memory copies
+    // overwrite each other's tables when persisting to disk.
+    _checkpointSaver = SqlJsCheckpointer.createFromDatabase(_db, persistDatabase);
+    logger.info('SqlJsCheckpointer initialized (shared db instance)');
 
-    // Initialize LangGraph checkpoint saver using sql.js
-    _checkpointSaver = await SqlJsCheckpointer.create(_dbPath);
-    logger.info('SqlJsCheckpointer initialized (persistent)');
+    // Persist initial state (now includes both conversations + checkpoint tables)
+    persistDatabase();
 
     return _db;
 }

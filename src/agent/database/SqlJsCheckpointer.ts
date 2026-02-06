@@ -150,10 +150,11 @@ export class SqlJsCheckpointer extends BaseCheckpointSaver {
     private db: SqlJsDatabase;
     private dbPath: string | null;
     private isSetup: boolean = false;
+    private externalPersist: (() => void) | null = null;
 
     /**
      * Create a new SqlJsCheckpointer instance.
-     * Use the static `create()` method to properly initialize.
+     * Use the static `create()` or `createFromDatabase()` methods to properly initialize.
      */
     private constructor(
         db: SqlJsDatabase,
@@ -205,6 +206,27 @@ export class SqlJsCheckpointer extends BaseCheckpointSaver {
     }
 
     /**
+     * Create a checkpointer from an existing sql.js Database instance.
+     * This shares the database with other consumers (e.g., ConversationRepository),
+     * avoiding the dual-instance problem where two in-memory copies overwrite each other.
+     *
+     * @param db - Existing sql.js Database instance to share
+     * @param persistFn - Function to persist the shared database to disk
+     * @param serde - Optional serializer protocol
+     * @returns Initialized checkpointer sharing the provided database
+     */
+    static createFromDatabase(
+        db: SqlJsDatabase,
+        persistFn: () => void,
+        serde?: SerializerProtocol
+    ): SqlJsCheckpointer {
+        const checkpointer = new SqlJsCheckpointer(db, null, serde);
+        checkpointer.externalPersist = persistFn;
+        checkpointer.setup();
+        return checkpointer;
+    }
+
+    /**
      * Create an in-memory checkpointer (no persistence).
      */
     static async createInMemory(serde?: SerializerProtocol): Promise<SqlJsCheckpointer> {
@@ -223,9 +245,15 @@ export class SqlJsCheckpointer extends BaseCheckpointSaver {
     }
 
     /**
-     * Save database to disk (if path was provided).
+     * Save database to disk.
+     * When using a shared database (via createFromDatabase), delegates to the
+     * external persist function. Otherwise, writes directly to the file.
      */
     private persist(): void {
+        if (this.externalPersist) {
+            this.externalPersist();
+            return;
+        }
         if (this.dbPath) {
             const data = this.db.export();
             const buffer = Buffer.from(data);
@@ -509,10 +537,14 @@ export class SqlJsCheckpointer extends BaseCheckpointSaver {
 
     /**
      * Close the database connection.
+     * When using a shared database (via createFromDatabase), only persists
+     * but does NOT close the db — the owner (engine.ts) handles that.
      */
     close(): void {
         this.persist();
-        this.db.close();
+        if (!this.externalPersist) {
+            this.db.close();
+        }
     }
 }
 

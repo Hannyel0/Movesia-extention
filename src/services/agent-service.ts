@@ -347,7 +347,7 @@ export class AgentService {
           // Parse session ID and connection sequence from URL
           const url = new URL(req.url ?? '/', `http://localhost:${port}`)
           const sessionId = url.searchParams.get('session') ?? undefined
-          const connSeq = parseInt(url.searchParams.get('conn_seq') ?? '0', 10)
+          const connSeq = parseInt(url.searchParams.get('conn') ?? url.searchParams.get('conn_seq') ?? '0', 10)
 
           // Hand off to Unity manager
           if (this.unityManager) {
