@@ -333,7 +333,8 @@ export const CloseCode = {
     DUPLICATE_SESSION: 4002,
     AUTHENTICATION_FAILED: 4003,
     SESSION_EXPIRED: 4004,
-    COMPILATION_RESET: 4005
+    COMPILATION_RESET: 4005,
+    PROJECT_MISMATCH: 4006,              // Connection rejected: wrong Unity project
 } as const;
 
 /** Standard message types. */

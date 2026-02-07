@@ -85,6 +85,9 @@ export class UnityManager {
     // Command routing for request/response
     private _commandRouter: CommandRouter;
 
+    // Project-scoped connection filtering
+    private _targetProjectPath?: string;
+
     // Current connection tracking (for single Unity connection)
     private _currentWs?: WebSocket;
     private _currentConnection?: ExtendedConnection;
@@ -145,14 +148,28 @@ export class UnityManager {
      * @param websocket - WebSocket connection
      * @param sessionId - Session identifier (from query param or handshake)
      * @param connSeq - Connection sequence number for takeover logic
+     * @param projectPath - Unity project path (from query param, for project-scoped filtering)
      */
     async handleConnection(
         websocket: WebSocket,
         providedSessionId?: string,
-        connSeq: number = 0
+        connSeq: number = 0,
+        projectPath?: string
     ): Promise<void> {
         // Generate connection ID
         const cid = this._generateCid();
+
+        // Project path validation: reject connections from wrong Unity projects
+        if (this._targetProjectPath && projectPath) {
+            if (!this._pathsMatch(projectPath, this._targetProjectPath)) {
+                logger.info(
+                    `Rejecting connection [${cid}]: project mismatch ` +
+                    `(incoming="${projectPath}", target="${this._targetProjectPath}")`
+                );
+                websocket.close(CloseCode.PROJECT_MISMATCH, 'project mismatch');
+                return;
+            }
+        }
 
         // Session and connSeq come from URL query params (no handshake needed)
         const sessionId: string = providedSessionId ?? randomUUID();
@@ -160,7 +177,8 @@ export class UnityManager {
         // Create connection metadata
         const connection = createExtendedConnection(cid, {
             session: sessionId,
-            connSeq
+            connSeq,
+            projectPath
         });
 
         // Try to accept the session
@@ -168,7 +186,8 @@ export class UnityManager {
             sessionId,
             connSeq,
             connection,
-            websocket
+            websocket,
+            projectPath
         );
 
         if (!decision.accept) {
@@ -345,6 +364,49 @@ export class UnityManager {
         this._currentSession = undefined;
     }
 
+    /**
+     * Set the target project path.
+     * Only Unity instances matching this path will be accepted.
+     * If a current connection exists and doesn't match, it will be disconnected.
+     */
+    setTargetProject(projectPath: string): void {
+        this._targetProjectPath = projectPath;
+        logger.info(`Target project set: ${projectPath}`);
+
+        // If there's a current connection that doesn't match, disconnect it
+        this.disconnectIfMismatch();
+    }
+
+    /**
+     * Get the current target project path.
+     */
+    get targetProjectPath(): string | undefined {
+        return this._targetProjectPath;
+    }
+
+    /**
+     * Disconnect the current Unity connection if its project path
+     * doesn't match the target project path.
+     */
+    disconnectIfMismatch(): void {
+        if (!this._targetProjectPath || !this._currentConnection || !this._currentWs) {
+            return;
+        }
+
+        const connectedProject = this._currentConnection.projectPath;
+
+        if (connectedProject && !this._pathsMatch(connectedProject, this._targetProjectPath)) {
+            logger.info(
+                `Disconnecting mismatched project: connected="${connectedProject}", target="${this._targetProjectPath}"`
+            );
+            try {
+                this._currentWs.close(CloseCode.PROJECT_MISMATCH, 'project mismatch');
+            } catch (error) {
+                logger.debug(`Error closing mismatched connection: ${error}`);
+            }
+        }
+    }
+
     // =========================================================================
     // Private Implementation
     // =========================================================================
@@ -509,6 +571,16 @@ export class UnityManager {
         message: Record<string, unknown>
     ): Promise<void> {
         await sendToClient(ws, message);
+    }
+
+    /**
+     * Compare two file paths for equality, normalizing separators and case.
+     * Handles Windows vs Unix path differences (backslash vs forward slash,
+     * case-insensitive on Windows).
+     */
+    private _pathsMatch(a: string, b: string): boolean {
+        const normalize = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+        return normalize(a) === normalize(b);
     }
 
     /**

@@ -352,8 +352,9 @@ export class AgentService {
     // Register unity manager globally for tools
     setUnityManager(this.unityManager)
 
-    // Start WebSocket server for Unity connection
-    await this.startWebSocketServer()
+    // NOTE: WebSocket server is NOT started here.
+    // It starts lazily when a project path is set via setProjectPath(),
+    // so we only accept connections from the correct Unity project.
 
     // Create the agent with sql.js checkpointer
     this.log('Creating LangGraph agent...')
@@ -373,8 +374,15 @@ export class AgentService {
 
   /**
    * Start the WebSocket server for Unity connections.
+   * Called lazily when a project path is set — not during initialization.
    */
   private async startWebSocketServer(): Promise<void> {
+    // Don't start if already running
+    if (this.wsServer) {
+      this.log('WebSocket server already running')
+      return
+    }
+
     const port = this.config.wsPort ?? 8765
 
     this.log(`Starting WebSocket server on port ${port}...`)
@@ -391,14 +399,19 @@ export class AgentService {
         this.wsServer.on('connection', async (ws: WebSocket, req) => {
           this.log(`🎮 Unity connection from ${req.socket.remoteAddress}`)
 
-          // Parse session ID and connection sequence from URL
+          // Parse session ID, connection sequence, and project path from URL
           const url = new URL(req.url ?? '/', `http://localhost:${port}`)
           const sessionId = url.searchParams.get('session') ?? undefined
           const connSeq = parseInt(url.searchParams.get('conn') ?? url.searchParams.get('conn_seq') ?? '0', 10)
+          const projectPath = url.searchParams.get('projectPath')
+            ? decodeURIComponent(url.searchParams.get('projectPath')!)
+            : undefined
 
-          // Hand off to Unity manager
+          this.log(`🔗 Connection params: session=${sessionId?.slice(0, 8) ?? 'none'}..., connSeq=${connSeq}, projectPath=${projectPath ?? 'none'}`)
+
+          // Hand off to Unity manager (which validates the project path)
           if (this.unityManager) {
-            await this.unityManager.handleConnection(ws, sessionId, connSeq)
+            await this.unityManager.handleConnection(ws, sessionId, connSeq, projectPath)
           }
         })
 
@@ -413,6 +426,31 @@ export class AgentService {
         )
         reject(err)
       }
+    })
+  }
+
+  /**
+   * Stop the WebSocket server and disconnect all Unity connections.
+   */
+  private async stopWebSocketServer(): Promise<void> {
+    if (!this.wsServer) {
+      return
+    }
+
+    this.log('Stopping WebSocket server...')
+
+    // Close all Unity connections first
+    if (this.unityManager) {
+      await this.unityManager.closeAll()
+    }
+
+    // Close the server
+    return new Promise((resolve) => {
+      this.wsServer!.close(() => {
+        this.log('WebSocket server stopped')
+        this.wsServer = null
+        resolve()
+      })
     })
   }
 
@@ -643,7 +681,8 @@ export class AgentService {
 
   /**
    * Set or update the project path (when user selects/switches projects).
-   * This can be called after initialization to configure the Unity project.
+   * This triggers the WebSocket server to start (if not already running)
+   * and configures project-scoped connection filtering.
    */
   async setProjectPath(newPath: string): Promise<void> {
     const previousPath = this.config.projectPath
@@ -658,7 +697,38 @@ export class AgentService {
     const { setUnityProjectPath } = await import('../agent/agent')
     setUnityProjectPath(newPath)
 
+    // Set target project on UnityManager (disconnects wrong Unity if connected)
+    if (this.unityManager) {
+      this.unityManager.setTargetProject(newPath)
+    }
+
+    // Start WebSocket server if not already running
+    // (first project selection triggers the server)
+    if (!this.wsServer) {
+      this.log('Project selected — starting WebSocket server...')
+      await this.startWebSocketServer()
+    }
+
     logger.info(`Project path updated successfully to: ${newPath}`)
+  }
+
+  /**
+   * Clear the project path and stop the WebSocket server.
+   * Called when user clears their project selection.
+   */
+  async clearProjectPath(): Promise<void> {
+    logger.info('Clearing project path')
+
+    this.config.projectPath = undefined
+    delete process.env.UNITY_PROJECT_PATH
+
+    const { setUnityProjectPath } = await import('../agent/agent')
+    setUnityProjectPath('')
+
+    // Stop WebSocket server — no project means no reason to accept connections
+    await this.stopWebSocketServer()
+
+    logger.info('Project path cleared, WebSocket server stopped')
   }
 
   /**

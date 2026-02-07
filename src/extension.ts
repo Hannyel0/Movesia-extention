@@ -253,6 +253,9 @@ export function activate(context: vscode.ExtensionContext) {
 
       case 'clearSelectedProject': {
         await context.workspaceState.update(SELECTED_PROJECT_KEY, undefined)
+        if (agentService) {
+          await agentService.clearProjectPath()
+        }
         postMessage({ type: 'selectedProject', projectPath: null })
         break
       }
