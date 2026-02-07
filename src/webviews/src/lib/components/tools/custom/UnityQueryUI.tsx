@@ -316,19 +316,16 @@ function SettingsView({ output }: { output: unknown }) {
 function parseOutput(output: unknown): UnityQuery.Output | undefined {
   if (!output) return undefined
 
-  // Already an object - return as-is
-  if (typeof output === 'object') {
-    return output as UnityQuery.Output
-  }
-
-  // JSON string - parse it
   if (typeof output === 'string') {
     try {
       return JSON.parse(output) as UnityQuery.Output
     } catch {
-      // Parse failed - return as error
       return { error: output } as UnityQuery.Output
     }
+  }
+
+  if (typeof output === 'object') {
+    return output as UnityQuery.Output
   }
 
   return output as UnityQuery.Output
@@ -344,7 +341,7 @@ export function UnityQueryUI({ tool, input, output, isActive }: ToolUIProps<Unit
 
   // Show input summary
   const renderInputSummary = () => {
-    if (!typedInput) return null
+    if (!typedInput || !typedInput.action) return null
 
     const actionIcons: Record<string, React.ReactNode> = {
       hierarchy: <Box className="w-3.5 h-3.5 text-blue-400" />,

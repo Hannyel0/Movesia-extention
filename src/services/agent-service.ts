@@ -190,7 +190,54 @@ function safeSerialize(obj: unknown): unknown {
   )
 }
 
+/**
+ * Unwrap tool input from LangGraph streamEvents v2 format.
+ *
+ * LangGraph wraps the actual tool arguments inside `{ input: "<json-string>" }`.
+ * For example, a tool called with `{ action: "hierarchy" }` arrives as:
+ *   `{ input: '{"action":"hierarchy"}' }`
+ *
+ * This function extracts the inner value and parses it if it's a JSON string,
+ * returning the actual tool arguments the UI components expect.
+ */
+function unwrapToolInput(raw: unknown): unknown {
+  if (typeof raw !== 'object' || raw === null) return raw
+
+  const obj = raw as Record<string, unknown>
+
+  // Check for the LangGraph wrapper pattern: single "input" key
+  if ('input' in obj) {
+    const inner = obj.input
+
+    // Inner value is a JSON string — parse it
+    if (typeof inner === 'string') {
+      try {
+        return JSON.parse(inner)
+      } catch {
+        // Not valid JSON, return as-is
+        return inner
+      }
+    }
+
+    // Inner value is already an object — return it directly
+    if (typeof inner === 'object' && inner !== null) {
+      return inner
+    }
+
+    return inner
+  }
+
+  // No wrapper — return as-is (already the actual tool args)
+  return raw
+}
+
 function truncateOutput(output: unknown, maxLength: number = 50000): unknown {
+  // Extract .content from LangChain ToolMessage objects
+  // ToolMessage wraps the actual output in { content: '...', type: 'tool', tool_call_id: '...', ... }
+  if (typeof output === 'object' && output !== null && 'content' in output) {
+    output = (output as { content: unknown }).content
+  }
+
   if (typeof output === 'string') {
     if (output.length > maxLength) {
       return output.slice(0, maxLength) + '... [truncated]'
@@ -484,11 +531,15 @@ export class AgentService {
           }
 
           const toolName = event.name || 'unknown'
-          const toolInput = event.data?.input || {}
+          const rawToolInput = event.data?.input || {}
           const toolCallId = event.run_id || randomUUID()
           toolCallCount++
 
           logger.info(`[Tool #${toolCallCount}] START: ${toolName}`)
+
+          // LangGraph streamEvents v2 wraps tool args inside { input: "<json-string>" }.
+          // Unwrap: extract the inner value and parse if it's a JSON string.
+          const toolInput = unwrapToolInput(rawToolInput)
 
           // Track the tool call
           currentToolCalls.set(toolCallId, toolName)
@@ -496,6 +547,7 @@ export class AgentService {
           // Stream tool input
           onEvent(protocol.toolInputStart(toolCallId, toolName))
           const serializedInput = safeSerialize(toolInput)
+
           onEvent(
             protocol.toolInputDelta(toolCallId, JSON.stringify(serializedInput))
           )

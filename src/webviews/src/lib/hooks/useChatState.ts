@@ -189,7 +189,7 @@ export function useChatState(options: UseChatStateOptions = {}): UseChatStateRet
           }
           break
 
-        case 'tool-input-available':
+        case 'tool-input-available': {
           // Tool input is available
           if (onToolCallEvent) {
             onToolCallEvent(
@@ -204,6 +204,7 @@ export function useChatState(options: UseChatStateOptions = {}): UseChatStateRet
             )
           }
           break
+        }
 
         case 'tool-output-available':
           // Tool output is available

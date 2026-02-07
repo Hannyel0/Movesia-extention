@@ -90,7 +90,7 @@ export function useToolCalls({
             })
             break
 
-          case 'tool-input':
+          case 'tool-input': {
             tools.set(event.toolCallId, {
               id: event.toolCallId,
               name: event.toolName || existingTool?.name || 'unknown',
@@ -100,8 +100,9 @@ export function useToolCalls({
               textOffsetStart: existingTool?.textOffsetStart ?? event.textLengthAtEvent,
             })
             break
+          }
 
-          case 'tool-output':
+          case 'tool-output': {
             if (existingTool) {
               tools.set(event.toolCallId, {
                 ...existingTool,
@@ -120,6 +121,7 @@ export function useToolCalls({
               })
             }
             break
+          }
 
           case 'tool-error':
             if (existingTool) {

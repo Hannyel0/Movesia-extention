@@ -11,8 +11,8 @@
  * - The DefaultToolUI fallback
  */
 
-import React, { useState } from 'react'
-import { ChevronRight, Loader2, CheckCircle2, XCircle, Wrench } from 'lucide-react'
+import React, { Component, useState } from 'react'
+import { ChevronRight, Loader2, CheckCircle2, XCircle, Wrench, AlertTriangle } from 'lucide-react'
 import { cn } from '../../utils'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible'
 import { getToolUIComponent, getToolConfig } from './registry'
@@ -36,6 +36,41 @@ function StateIcon({ state }: StateIconProps) {
       return <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
     case 'error':
       return <XCircle className="w-3.5 h-3.5 text-red-400" />
+  }
+}
+
+// =============================================================================
+// ERROR BOUNDARY
+// =============================================================================
+
+interface ToolErrorBoundaryState {
+  hasError: boolean
+  error: Error | null
+}
+
+class ToolErrorBoundary extends Component<
+  { children: React.ReactNode; toolName: string },
+  ToolErrorBoundaryState
+> {
+  constructor(props: { children: React.ReactNode; toolName: string }) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+
+  static getDerivedStateFromError(error: Error): ToolErrorBoundaryState {
+    return { hasError: true, error }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex items-center gap-2 text-xs text-red-400 p-2">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          <span>Failed to render {this.props.toolName}: {this.state.error?.message}</span>
+        </div>
+      )
+    }
+    return this.props.children
   }
 }
 
@@ -112,11 +147,13 @@ export function ToolUIWrapper({ tool, defaultOpen = true }: ToolUIWrapperProps) 
         {/* Content - Collapsible */}
         <CollapsibleContent>
           <div className="px-3 pb-3 pt-1 border-t border-[var(--vscode-panel-border)]">
-            {CustomComponent ? (
-              <CustomComponent {...uiProps} />
-            ) : (
-              <DefaultToolUI {...uiProps} />
-            )}
+            <ToolErrorBoundary toolName={config.displayName}>
+              {CustomComponent ? (
+                <CustomComponent {...uiProps} />
+              ) : (
+                <DefaultToolUI {...uiProps} />
+              )}
+            </ToolErrorBoundary>
           </div>
         </CollapsibleContent>
       </div>
