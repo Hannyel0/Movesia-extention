@@ -8,8 +8,7 @@
   "changelogUrl": "https://github.com/YOUR_USERNAME/movesia-connection/blob/main/CHANGELOG.md",
   "licensesUrl": "https://github.com/YOUR_USERNAME/movesia-connection/blob/main/LICENSE.md",
   "dependencies": {
-    "com.unity.nuget.newtonsoft-json": "3.2.1",
-    "com.endel.nativewebsocket": "https://github.com/endel/NativeWebSocket.git#upm"
+    "com.unity.nuget.newtonsoft-json": "3.2.1"
   },
   "keywords": [
     "websocket",

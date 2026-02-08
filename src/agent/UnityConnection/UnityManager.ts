@@ -1,7 +1,11 @@
 /**
- * Improved Unity Manager for WebSocket connection management.
+ * Unity Manager for WebSocket connection management.
  *
- * Integrates all the best practices:
+ * Option B architecture: Accept ALL Unity connections, route commands
+ * to the one matching the target project. Non-target connections stay
+ * idle (heartbeats only). Switching target project is instant.
+ *
+ * Integrates:
  * - Session management with monotonic takeover
  * - Heartbeat/keepalive with compilation-aware suspension
  * - Message routing with ACK support
@@ -52,12 +56,17 @@ export interface InterruptManager {
 /**
  * Manages WebSocket connections from Unity Editor.
  *
+ * Architecture: All Unity instances connect and stay connected.
+ * Commands are routed only to the connection matching _targetProjectPath.
+ * Non-target connections are idle (heartbeats only).
+ *
  * Features:
- * - Single active connection per project/session
- * - Automatic takeover of older connections
+ * - Multiple simultaneous connections (one per Unity project)
+ * - Automatic takeover of older connections (same session)
  * - Heartbeat with compilation-aware suspension
  * - Command/response correlation for tool calls
  * - Interrupt support for async operations
+ * - Instant target project switching (no reconnection needed)
  *
  * Usage:
  *     const manager = new UnityManager();
@@ -73,7 +82,7 @@ export class UnityManager {
     private _interruptManager?: InterruptManager;
     private _onDomainEvent?: DomainEventCallback;
 
-    // Session management
+    // Session management (holds ALL connections)
     private _sessions: UnitySessionManager;
 
     // Heartbeat management
@@ -85,13 +94,8 @@ export class UnityManager {
     // Command routing for request/response
     private _commandRouter: CommandRouter;
 
-    // Project-scoped connection filtering
+    // Target project — commands are routed to the connection matching this path
     private _targetProjectPath?: string;
-
-    // Current connection tracking (for single Unity connection)
-    private _currentWs?: WebSocket;
-    private _currentConnection?: ExtendedConnection;
-    private _currentSession?: string;
 
     // Connection change callbacks
     private _connectionCallbacks: ConnectionChangeCallback[] = [];
@@ -143,12 +147,14 @@ export class UnityManager {
     /**
      * Handle a new Unity WebSocket connection.
      *
-     * This is the main entry point called from the WebSocket endpoint.
+     * Accepts ALL connections regardless of project path.
+     * The connection is stored in the session manager and kept alive.
+     * Commands are only routed to the connection matching _targetProjectPath.
      *
      * @param websocket - WebSocket connection
      * @param sessionId - Session identifier (from query param or handshake)
      * @param connSeq - Connection sequence number for takeover logic
-     * @param projectPath - Unity project path (from query param, for project-scoped filtering)
+     * @param projectPath - Unity project path (from query param)
      */
     async handleConnection(
         websocket: WebSocket,
@@ -158,18 +164,6 @@ export class UnityManager {
     ): Promise<void> {
         // Generate connection ID
         const cid = this._generateCid();
-
-        // Project path validation: reject connections from wrong Unity projects
-        if (this._targetProjectPath && projectPath) {
-            if (!this._pathsMatch(projectPath, this._targetProjectPath)) {
-                logger.info(
-                    `Rejecting connection [${cid}]: project mismatch ` +
-                    `(incoming="${projectPath}", target="${this._targetProjectPath}")`
-                );
-                websocket.close(CloseCode.PROJECT_MISMATCH, 'project mismatch');
-                return;
-            }
-        }
 
         // Session and connSeq come from URL query params (no handshake needed)
         const sessionId: string = providedSessionId ?? randomUUID();
@@ -196,7 +190,7 @@ export class UnityManager {
             return;
         }
 
-        // Supersede old connection if needed
+        // Supersede old connection if needed (same session, newer connSeq)
         if (decision.supersede) {
             try {
                 decision.supersede.close(CloseCode.SUPERSEDED, 'superseded by newer connection');
@@ -205,17 +199,16 @@ export class UnityManager {
             }
         }
 
-        // Update current connection
-        this._currentWs = websocket;
-        this._currentConnection = connection;
-        this._currentSession = sessionId;
         connection.state = ConnectionState.OPEN;
 
         // Start heartbeat if not running
         this._heartbeat.start();
 
-        // Notify connection change
-        await this._notifyConnectionChange(true);
+        // Only notify "connected" if this connection matches the target project
+        const isTargetProject = this._isTargetProject(projectPath);
+        if (isTargetProject) {
+            await this._notifyConnectionChange(true);
+        }
 
         // Send welcome message
         await sendWelcome(websocket, {
@@ -225,7 +218,8 @@ export class UnityManager {
         });
 
         const shortSession = sessionId.substring(0, 8);
-        logger.info(`Unity connected [${cid}] session=${shortSession}`);
+        const targetLabel = isTargetProject ? ' [TARGET]' : '';
+        logger.info(`Unity connected [${cid}] session=${shortSession} project="${projectPath ?? 'unknown'}"${targetLabel}`);
 
         // Set up event handlers
         websocket.on('message', async (data) => {
@@ -250,11 +244,13 @@ export class UnityManager {
     /**
      * Send a command to Unity and wait for response.
      *
+     * Routes the command to the connection matching _targetProjectPath.
+     *
      * @param commandType - Type of command (e.g., "query_hierarchy")
      * @param params - Command parameters
      * @param timeout - Timeout in seconds (defaults to config)
      * @returns Response body from Unity
-     * @throws Error if no Unity connection
+     * @throws Error if no Unity connection for target project
      * @throws Error if response times out
      */
     async sendAndWait(
@@ -262,10 +258,12 @@ export class UnityManager {
         params: Record<string, unknown> = {},
         timeout?: number
     ): Promise<Record<string, unknown>> {
-        if (!this._currentWs || !this._currentConnection) {
-            throw new Error('No Unity connection available');
+        const activeSession = await this._getActiveSession();
+        if (!activeSession) {
+            throw new Error('No Unity connection available for target project');
         }
 
+        const { websocket: ws, connection, sessionId } = activeSession;
         const timeoutMs = (timeout ?? this.config.commandTimeout) * 1000;
 
         // Create and send command
@@ -273,7 +271,7 @@ export class UnityManager {
             commandType,
             params,
             ConnectionSource.VSCODE,
-            this._currentSession
+            sessionId
         );
 
         // Register for response using message ID (Unity echoes this back)
@@ -293,7 +291,7 @@ export class UnityManager {
         logger.info(`Registered pending command: msg.id=${msg.id}`);
 
         try {
-            await sendToClient(this._currentWs, msg.toDict());
+            await sendToClient(ws, msg.toDict());
             logger.info(`Sent command ${commandType} [msg.id=${msg.id}]`);
 
             return await responsePromise;
@@ -304,32 +302,33 @@ export class UnityManager {
     }
 
     /**
-     * Check if Unity is currently connected.
+     * Check if Unity is currently connected (for the target project).
      */
     get isConnected(): boolean {
-        return (
-            this._currentWs !== undefined &&
-            this._currentConnection !== undefined &&
-            this._currentConnection.state === ConnectionState.OPEN
-        );
+        if (!this._targetProjectPath) {
+            return false;
+        }
+        // Synchronous check — look through sessions for matching project
+        return this._hasActiveSessionSync();
     }
 
     /**
-     * Get current Unity project path.
+     * Get current target Unity project path.
      */
     get currentProject(): string | undefined {
-        return this._currentConnection?.projectPath;
+        return this._targetProjectPath;
     }
 
     /**
-     * Check if Unity is currently compiling.
+     * Check if the target Unity project is currently compiling.
      */
     get isCompiling(): boolean {
-        return this._currentConnection?.isCompiling ?? false;
+        const session = this._getActiveSessionSync();
+        return session?.connection.isCompiling ?? false;
     }
 
     /**
-     * Get number of active connections.
+     * Get number of active connections (all projects).
      */
     get connectionCount(): number {
         return this._sessions.size;
@@ -359,22 +358,28 @@ export class UnityManager {
         }
 
         await this._sessions.clearAll();
-        this._currentWs = undefined;
-        this._currentConnection = undefined;
-        this._currentSession = undefined;
     }
 
     /**
      * Set the target project path.
-     * Only Unity instances matching this path will be accepted.
-     * If a current connection exists and doesn't match, it will be disconnected.
+     * Commands will be routed to the Unity instance matching this path.
+     * If a connection already exists for this project, notifies connected.
+     * Other connections are NOT disconnected — they stay idle.
      */
-    setTargetProject(projectPath: string): void {
+    async setTargetProject(projectPath: string): Promise<void> {
+        const oldTarget = this._targetProjectPath;
         this._targetProjectPath = projectPath;
         logger.info(`Target project set: ${projectPath}`);
 
-        // If there's a current connection that doesn't match, disconnect it
-        this.disconnectIfMismatch();
+        // Check if we already have a connection for the new target
+        const session = await this._sessions.getSessionForProject(projectPath);
+        if (session && session.connection.state === ConnectionState.OPEN) {
+            logger.info(`Already connected to target project — activating`);
+            await this._notifyConnectionChange(true);
+        } else if (oldTarget !== projectPath) {
+            // Switching to a project we don't have a connection for
+            await this._notifyConnectionChange(false);
+        }
     }
 
     /**
@@ -385,31 +390,85 @@ export class UnityManager {
     }
 
     /**
-     * Disconnect the current Unity connection if its project path
-     * doesn't match the target project path.
+     * Get all connected project paths.
      */
-    disconnectIfMismatch(): void {
-        if (!this._targetProjectPath || !this._currentConnection || !this._currentWs) {
-            return;
-        }
-
-        const connectedProject = this._currentConnection.projectPath;
-
-        if (connectedProject && !this._pathsMatch(connectedProject, this._targetProjectPath)) {
-            logger.info(
-                `Disconnecting mismatched project: connected="${connectedProject}", target="${this._targetProjectPath}"`
-            );
-            try {
-                this._currentWs.close(CloseCode.PROJECT_MISMATCH, 'project mismatch');
-            } catch (error) {
-                logger.debug(`Error closing mismatched connection: ${error}`);
+    async getConnectedProjects(): Promise<string[]> {
+        const sessions = await this._sessions.getAllSessions();
+        const projects: string[] = [];
+        for (const [, entry] of sessions) {
+            if (entry.connection.projectPath && entry.connection.state === ConnectionState.OPEN) {
+                projects.push(entry.connection.projectPath);
             }
         }
+        return projects;
     }
 
     // =========================================================================
     // Private Implementation
     // =========================================================================
+
+    /**
+     * Get the active session for the target project (async).
+     */
+    private async _getActiveSession(): Promise<{ websocket: WebSocket; connection: ExtendedConnection; sessionId: string } | undefined> {
+        if (!this._targetProjectPath) {
+            return undefined;
+        }
+
+        // Look up session by project path (uses normalized path matching)
+        const sessions = await this._sessions.getAllSessions();
+        for (const [sessionId, entry] of sessions) {
+            if (
+                entry.connection.projectPath &&
+                entry.connection.state === ConnectionState.OPEN &&
+                this._pathsMatch(entry.connection.projectPath, this._targetProjectPath)
+            ) {
+                return { websocket: entry.websocket, connection: entry.connection, sessionId };
+            }
+        }
+
+        return undefined;
+    }
+
+    /**
+     * Synchronous check if we have an active session for the target project.
+     * Used by getters that can't be async.
+     */
+    private _hasActiveSessionSync(): boolean {
+        return this._getActiveSessionSync() !== undefined;
+    }
+
+    /**
+     * Synchronous lookup of active session for target project.
+     * Accesses the session manager's internal map directly.
+     */
+    private _getActiveSessionSync(): SessionEntry | undefined {
+        if (!this._targetProjectPath) {
+            return undefined;
+        }
+
+        // Access sessions synchronously (Map is sync, the async wrapper is just for interface consistency)
+        for (const entry of (this._sessions as any)._sessions.values()) {
+            if (
+                entry.connection.projectPath &&
+                entry.connection.state === ConnectionState.OPEN &&
+                this._pathsMatch(entry.connection.projectPath, this._targetProjectPath)
+            ) {
+                return entry;
+            }
+        }
+        return undefined;
+    }
+
+    /**
+     * Check if a project path matches the current target.
+     */
+    private _isTargetProject(projectPath?: string): boolean {
+        if (!this._targetProjectPath || !projectPath) {
+            return false;
+        }
+        return this._pathsMatch(projectPath, this._targetProjectPath);
+    }
 
     /**
      * Handle incoming message.
@@ -447,31 +506,29 @@ export class UnityManager {
     ): Promise<void> {
         connection.state = ConnectionState.CLOSED;
 
+        // Check if this was the target project's connection BEFORE clearing
+        const wasTargetProject = this._isTargetProject(connection.projectPath);
+
         // Clear from sessions
         await this._sessions.clearIfMatch(sessionId, websocket);
 
-        // Clear current connection if it matches
-        if (this._currentWs === websocket) {
-            this._currentWs = undefined;
-            this._currentConnection = undefined;
-            this._currentSession = undefined;
+        // Cancel pending commands only if this was the target project
+        if (wasTargetProject) {
+            for (const [_requestId, pending] of this._pendingCommands) {
+                pending.reject(new Error('Connection closed'));
+            }
+            this._pendingCommands.clear();
+
+            // Notify disconnection
+            await this._notifyConnectionChange(false);
         }
 
-        // Cancel pending commands
-        for (const [_requestId, pending] of this._pendingCommands) {
-            pending.reject(new Error('Connection closed'));
-        }
-        this._pendingCommands.clear();
-
-        // Notify connection change
-        await this._notifyConnectionChange(false);
-
-        // Stop heartbeat if no more connections
+        // Stop heartbeat if no more connections at all
         if (this._sessions.size === 0) {
             this._heartbeat.stop();
         }
 
-        logger.info(`Cleaned up connection [${connection.cid}]`);
+        logger.info(`Cleaned up connection [${connection.cid}] project="${connection.projectPath ?? 'unknown'}"`);
     }
 
     /**

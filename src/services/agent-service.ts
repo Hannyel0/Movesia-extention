@@ -45,7 +45,7 @@ const logger = createLogger('movesia.agent')
  * This is a SaaS product - the key is provided by Movesia.
  */
 const OPENROUTER_API_KEY =
-  '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' // TODO: Replace with actual key
+  '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' // TODO: Replace with actual key
 
 /**
  * Tavily API key for internet search (optional).
@@ -402,16 +402,30 @@ export class AgentService {
           // Parse session ID, connection sequence, and project path from URL
           const url = new URL(req.url ?? '/', `http://localhost:${port}`)
           const sessionId = url.searchParams.get('session') ?? undefined
-          const connSeq = parseInt(url.searchParams.get('conn') ?? url.searchParams.get('conn_seq') ?? '0', 10)
+          const connSeq = parseInt(
+            url.searchParams.get('conn') ??
+              url.searchParams.get('conn_seq') ??
+              '0',
+            10
+          )
           const projectPath = url.searchParams.get('projectPath')
             ? decodeURIComponent(url.searchParams.get('projectPath')!)
             : undefined
 
-          this.log(`🔗 Connection params: session=${sessionId?.slice(0, 8) ?? 'none'}..., connSeq=${connSeq}, projectPath=${projectPath ?? 'none'}`)
+          this.log(
+            `🔗 Connection params: session=${
+              sessionId?.slice(0, 8) ?? 'none'
+            }..., connSeq=${connSeq}, projectPath=${projectPath ?? 'none'}`
+          )
 
           // Hand off to Unity manager (which validates the project path)
           if (this.unityManager) {
-            await this.unityManager.handleConnection(ws, sessionId, connSeq, projectPath)
+            await this.unityManager.handleConnection(
+              ws,
+              sessionId,
+              connSeq,
+              projectPath
+            )
           }
         })
 
@@ -445,7 +459,7 @@ export class AgentService {
     }
 
     // Close the server
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       this.wsServer!.close(() => {
         this.log('WebSocket server stopped')
         this.wsServer = null
@@ -501,7 +515,12 @@ export class AgentService {
           unityProjectPath: this.config.projectPath || null,
           unityVersion: null,
         })
-        logger.info(`[Chat] Conversation metadata created/updated for thread=${threadId.slice(0, 16)}`)
+        logger.info(
+          `[Chat] Conversation metadata created/updated for thread=${threadId.slice(
+            0,
+            16
+          )}`
+        )
       }
 
       // Start the message
@@ -697,9 +716,9 @@ export class AgentService {
     const { setUnityProjectPath } = await import('../agent/agent')
     setUnityProjectPath(newPath)
 
-    // Set target project on UnityManager (disconnects wrong Unity if connected)
+    // Set target project on UnityManager (routes commands to matching Unity instance)
     if (this.unityManager) {
-      this.unityManager.setTargetProject(newPath)
+      await this.unityManager.setTargetProject(newPath)
     }
 
     // Start WebSocket server if not already running
@@ -828,32 +847,15 @@ export class AgentService {
       const messages = channelValues.messages
 
       if (!messages || !Array.isArray(messages)) {
-        logger.warn(`No messages array found in checkpoint for thread: ${threadId}`)
+        logger.warn(
+          `No messages array found in checkpoint for thread: ${threadId}`
+        )
         return []
       }
 
-      logger.info(`Found ${messages.length} messages in checkpoint for thread: ${threadId}`)
-
-      // DEBUG: Log the raw messages structure
-      logger.info(`=== RAW MESSAGES DUMP ===`)
-      messages.forEach((msg, idx) => {
-        const msgObj = msg as any
-        const debugInfo = {
-          type: msgObj.type,
-          hasContent: !!msgObj.content,
-          contentType: typeof msgObj.content,
-          contentPreview: typeof msgObj.content === 'string'
-            ? msgObj.content.slice(0, 100)
-            : Array.isArray(msgObj.content)
-              ? `Array[${msgObj.content.length}]`
-              : JSON.stringify(msgObj.content).slice(0, 100),
-          hasToolCalls: !!msgObj.tool_calls,
-          toolCallsCount: msgObj.tool_calls?.length || 0,
-          allKeys: Object.keys(msgObj),
-        }
-        logger.info(`Message ${idx}: ${JSON.stringify(debugInfo, null, 2)}`)
-      })
-      logger.info(`=== END RAW MESSAGES DUMP ===`)
+      logger.info(
+        `Found ${messages.length} messages in checkpoint for thread: ${threadId}`
+      )
 
       // First pass: Build a map of tool outputs by tool_call_id
       const toolOutputs = new Map<string, unknown>()
@@ -866,19 +868,14 @@ export class AgentService {
         }
 
         if (msgObj.type === 'tool' && msgObj.tool_call_id) {
-          logger.info(`Found ToolMessage: tool_call_id=${msgObj.tool_call_id}, name=${msgObj.name}`)
-          // This is a ToolMessage containing the output for a tool call
           try {
-            // Try to parse as JSON if it's a string
-            const output = typeof msgObj.content === 'string'
-              ? JSON.parse(msgObj.content)
-              : msgObj.content
+            const output =
+              typeof msgObj.content === 'string'
+                ? JSON.parse(msgObj.content)
+                : msgObj.content
             toolOutputs.set(msgObj.tool_call_id, output)
-            logger.info(`  Stored tool output for ${msgObj.tool_call_id}`)
           } catch {
-            // If not JSON, store as-is
             toolOutputs.set(msgObj.tool_call_id, msgObj.content)
-            logger.info(`  Stored raw tool output for ${msgObj.tool_call_id}`)
           }
         }
       }
@@ -910,53 +907,43 @@ export class AgentService {
           name?: string
         }
 
-        logger.info(`Processing message type: ${msgObj.type}`)
-
         // Determine role based on message type
         let role = 'assistant'
         if (msgObj.type === 'human') {
           role = 'user'
-          logger.info(`  -> Classified as USER message`)
         } else if (msgObj.type === 'ai' || msgObj.type === 'AIMessage') {
           role = 'assistant'
-          logger.info(`  -> Classified as ASSISTANT message`)
         } else if (msgObj.type === 'system') {
-          // Skip system messages (internal prompts)
-          logger.info(`  -> SKIPPING system message`)
           continue
         } else if (msgObj.type === 'tool') {
-          // Skip tool messages - they're merged into the assistant message tool_calls
-          logger.info(`  -> SKIPPING tool message`)
           continue
         } else {
-          logger.warn(`  -> UNKNOWN message type: ${msgObj.type}, defaulting to assistant`)
+          logger.warn(
+            `Unknown message type: ${msgObj.type}, defaulting to assistant`
+          )
         }
 
         // Extract content
         let content = ''
         if (typeof msgObj.content === 'string') {
           content = msgObj.content
-          logger.info(`  -> Content (string): "${content.slice(0, 100)}${content.length > 100 ? '...' : ''}"`)
         } else if (Array.isArray(msgObj.content)) {
-          // Handle structured content (e.g., Claude's content blocks)
-          logger.info(`  -> Content is array with ${msgObj.content.length} blocks`)
           for (const block of msgObj.content) {
             if (block.type === 'text' && block.text) {
               content += block.text
-              logger.info(`    -> Extracted text block: "${block.text.slice(0, 50)}..."`)
             }
           }
-        } else {
-          logger.warn(`  -> Content is neither string nor array: ${typeof msgObj.content}`)
         }
 
         // Extract tool calls if present (for assistant messages)
-        let toolCalls: Array<{
-          id: string
-          name: string
-          input?: Record<string, unknown>
-          output?: unknown
-        }> | undefined
+        let toolCalls:
+          | Array<{
+              id: string
+              name: string
+              input?: Record<string, unknown>
+              output?: unknown
+            }>
+          | undefined
 
         if (msgObj.tool_calls && msgObj.tool_calls.length > 0) {
           toolCalls = msgObj.tool_calls.map(tc => {
@@ -974,27 +961,12 @@ export class AgentService {
         const formattedMsg = {
           role,
           content,
-          ...(toolCalls && toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+          ...(toolCalls && toolCalls.length > 0
+            ? { tool_calls: toolCalls }
+            : {}),
         }
-        const msgDebugInfo = {
-          role,
-          contentLength: content.length,
-          hasToolCalls: toolCalls && toolCalls.length > 0,
-          toolCallsCount: toolCalls?.length || 0
-        }
-        logger.info(`  -> ADDING formatted message: ${JSON.stringify(msgDebugInfo)}`)
         formattedMessages.push(formattedMsg)
       }
-
-      logger.info(`=== FORMATTED MESSAGES ===`)
-      logger.info(`Total formatted: ${formattedMessages.length} messages`)
-      logger.info(`Full messages array: ${JSON.stringify(formattedMessages.map(m => ({
-        role: m.role,
-        contentLength: m.content.length,
-        contentPreview: m.content.slice(0, 50),
-        hasToolCalls: !!m.tool_calls
-      })), null, 2)}`)
-      logger.info(`=== END FORMATTED MESSAGES ===`)
 
       return formattedMessages
     } catch (error) {

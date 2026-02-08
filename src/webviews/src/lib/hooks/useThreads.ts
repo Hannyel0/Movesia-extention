@@ -79,6 +79,10 @@ export function useThreads({
   const pendingSelectRef = useRef<string | null>(null)
   const pendingDetailsRef = useRef<string | null>(null)
 
+  // Keep a ref to current threadId so the message listener doesn't need it in deps
+  const threadIdRef = useRef<string | null>(null)
+  threadIdRef.current = threadId
+
   // Set up message listener for responses from extension
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -153,7 +157,7 @@ export function useThreads({
           // Response to deleteThread request
           log('Thread', `Thread deleted: ${message.threadId}`)
           setThreads(prev => prev.filter(t => t.id !== message.threadId))
-          if (threadId === message.threadId) {
+          if (threadIdRef.current === message.threadId) {
             setThreadId(null)
             setMessages([])
           }
@@ -190,7 +194,7 @@ export function useThreads({
 
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
-  }, [setMessages, onLoadToolCalls, threadId])
+  }, [setMessages, onLoadToolCalls])
 
   // Fetch threads from backend on mount
   useEffect(() => {
@@ -200,7 +204,6 @@ export function useThreads({
 
   // Fetch conversation details from backend and add to threads list
   const fetchConversationDetails = useCallback((id: string) => {
-    log('Thread', `>>> fetchConversationDetails called with id: ${id}`)
     pendingDetailsRef.current = id
     VSCodeAPI.postMessage({ type: 'getConversationDetails', threadId: id })
   }, [])

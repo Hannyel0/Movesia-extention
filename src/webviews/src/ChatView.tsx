@@ -188,18 +188,29 @@ function ChatView() {
   })
 
   // Sync thread IDs between chat hook and threads hook (bidirectional)
+  // Use a ref to prevent ping-pong loops between the two effects
+  const isSyncingThreadIdRef = useRef(false)
+
   useEffect(() => {
+    if (isSyncingThreadIdRef.current) return
     if (threadId && threadId !== threadsThreadId) {
       // Chat hook got a new thread ID (e.g., from backend after first message) → sync to threads hook
+      isSyncingThreadIdRef.current = true
       threadsSetThreadId(threadId)
       fetchConversationDetails(threadId)
+      // Reset guard after React processes the state update
+      queueMicrotask(() => { isSyncingThreadIdRef.current = false })
     }
   }, [threadId, threadsThreadId, threadsSetThreadId, fetchConversationDetails])
 
   useEffect(() => {
+    if (isSyncingThreadIdRef.current) return
     if (threadsThreadId && threadsThreadId !== threadId) {
       // Threads hook got a new thread ID (e.g., user selected an old thread) → sync to chat hook
+      isSyncingThreadIdRef.current = true
       setThreadId(threadsThreadId)
+      // Reset guard after React processes the state update
+      queueMicrotask(() => { isSyncingThreadIdRef.current = false })
     }
   }, [threadsThreadId, threadId, setThreadId])
 

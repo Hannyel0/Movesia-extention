@@ -17,7 +17,11 @@ public static class WebSocketClient
     private static int reconnectingFlag = 0;
     private static CancellationTokenSource cts;
     private static readonly System.Random rng = new System.Random();
-    
+
+    // --- Message Queue (process on main thread) ---
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<string> incomingMessages
+        = new System.Collections.Concurrent.ConcurrentQueue<string>();
+
     // --- Heartbeat ---
     private static DateTime nextHeartbeatAt = DateTime.MinValue;
     private const int HEARTBEAT_INTERVAL_SEC = 25;
@@ -84,8 +88,9 @@ public static class WebSocketClient
         var mySeq = ++connectionSequence;
         currentSequence = mySeq;
 
-        // Include session and conn in URL so middleware can track connections
-        var url = $"{WS_URL}?session={SessionId}&conn={mySeq}";
+        // Include session, conn, and project path in URL so middleware can track connections
+        var projectPath = Application.dataPath.Replace("/Assets", "").Replace("\\Assets", "");
+        var url = $"{WS_URL}?session={SessionId}&conn={mySeq}&projectPath={Uri.EscapeDataString(projectPath)}";
         ws = new WebSocket(url);
 
         ws.OnOpen += () =>
@@ -100,18 +105,14 @@ public static class WebSocketClient
         ws.OnMessage += bytes =>
         {
             var msg = Encoding.UTF8.GetString(bytes);
-            Debug.Log($"📨 Received: {msg}");
             OnMessageReceived?.Invoke(msg);
-
-            // Route to handler
-            _ = MessageHandler.HandleMessage(msg);
+            incomingMessages.Enqueue(msg);
         };
 
-        ws.OnError += async err =>
+        ws.OnError += err =>
         {
             Debug.LogWarning($"⚠️ WebSocket error (seq={mySeq}): {err}");
-            if (mySeq != currentSequence) return;
-            await ReconnectSoon();
+            // Don't reconnect here — let OnClose handle it with the actual close code
         };
 
         ws.OnClose += async code =>
@@ -125,7 +126,14 @@ public static class WebSocketClient
                 Debug.Log("Connection superseded - not reconnecting");
                 return;
             }
-            
+
+            // Don't reconnect if server says wrong project (custom close code 4006)
+            if ((int)code == 4006)
+            {
+                Debug.Log("Project mismatch - this server is connected to a different Unity project. Not reconnecting.");
+                return;
+            }
+
             OnDisconnected?.Invoke();
             await ReconnectSoon();
         };
@@ -246,6 +254,19 @@ public static class WebSocketClient
     private static void OnEditorUpdate()
     {
         ws?.DispatchMessageQueue();
+
+        // Process incoming messages on the main thread
+        while (incomingMessages.TryDequeue(out var msg))
+        {
+            try
+            {
+                _ = MessageHandler.HandleMessage(msg);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"❌ Error handling message: {ex.Message}");
+            }
+        }
 
         if (ws != null && ws.State == WebSocketState.Open)
         {

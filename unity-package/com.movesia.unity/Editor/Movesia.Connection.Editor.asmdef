@@ -2,7 +2,7 @@
     "name": "Movesia.Connection.Editor",
     "rootNamespace": "Movesia.Connection",
     "references": [
-        "endel.nativewebsocket"
+        "Movesia.WebSocket"
     ],
     "includePlatforms": [
         "Editor"
