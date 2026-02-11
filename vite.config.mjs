@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -9,7 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
  * @type {import('vite').UserConfig}
  */
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   publicDir: 'src/webviews/public',
   define: {
     'process.env.NODE_ENV': JSON.stringify('production'),
