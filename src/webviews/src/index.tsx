@@ -39,11 +39,12 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       return
     }
 
-    if (authState.isAuthenticated) {
-      console.log(`[OAuth][AuthGate] User is authenticated — navigating from ${location.pathname} to /projectSelector`)
+    if (authState.isAuthenticated && location.pathname === '/signIn') {
+      console.log(`[OAuth][AuthGate] User is authenticated on /signIn — redirecting to /projectSelector`)
       navigate('/projectSelector', { replace: true })
-    } else {
-      console.log('[OAuth][AuthGate] User is NOT authenticated')
+    } else if (!authState.isAuthenticated && location.pathname !== '/signIn') {
+      console.log(`[OAuth][AuthGate] User is NOT authenticated — redirecting from ${location.pathname} to /signIn`)
+      navigate('/signIn', { replace: true })
     }
   }, [authState.isAuthenticated, isLoading, navigate, location.pathname])
 
