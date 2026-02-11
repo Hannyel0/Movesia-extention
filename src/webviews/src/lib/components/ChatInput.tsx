@@ -1,6 +1,26 @@
-import { useRef, useEffect, KeyboardEvent } from 'react'
-import { Send, Loader2, Sparkles, Wrench, Mic, Search, Globe, ImageIcon, Paperclip } from 'lucide-react'
+import { useState, useRef, useEffect, KeyboardEvent } from 'react'
+import { ArrowUp, Loader2, Plus, Code, MessageCircle, ClipboardList, Check, ChevronDown } from 'lucide-react'
 import { cn } from '../utils'
+
+export type ChatMode = 'code' | 'chat' | 'plan'
+
+const MODE_CONFIG: Record<ChatMode, { icon: typeof Code; label: string; description: string }> = {
+  code: {
+    icon: Code,
+    label: 'Code',
+    description: 'Can write and edit code',
+  },
+  chat: {
+    icon: MessageCircle,
+    label: 'Chat',
+    description: 'Reads but won\'t edit',
+  },
+  plan: {
+    icon: ClipboardList,
+    label: 'Plan',
+    description: 'Plan changes before implementing',
+  },
+}
 
 interface ChatInputProps {
   value: string
@@ -8,6 +28,8 @@ interface ChatInputProps {
   onSend: () => void
   isLoading: boolean
   placeholder?: string
+  mode?: ChatMode
+  onModeChange?: (mode: ChatMode) => void
 }
 
 export function ChatInput({
@@ -15,14 +37,38 @@ export function ChatInput({
   onChange,
   onSend,
   isLoading,
-  placeholder = "Ask anything. Type @ for mentions and / for shortcuts.",
+  placeholder = "Ask anything",
+  mode: controlledMode,
+  onModeChange,
 }: ChatInputProps) {
+  const [internalMode, setInternalMode] = useState<ChatMode>('code')
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [focused, setFocused] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  const mode = controlledMode ?? internalMode
+  const setMode = (m: ChatMode) => {
+    if (onModeChange) onModeChange(m)
+    else setInternalMode(m)
+  }
 
   // Focus input on mount
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!dropdownOpen) return
+    const handleClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [dropdownOpen])
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -31,70 +77,118 @@ export function ChatInput({
     }
   }
 
+  const currentConfig = MODE_CONFIG[mode]
+  const CurrentIcon = currentConfig.icon
+
   return (
-    <div className="p-4">
-      <div>
-        <div className="relative flex flex-col rounded-2xl bg-vscode-input-background border border-vscode-input-border overflow-hidden">
-          {/* Input Row */}
-          <div className="flex items-center px-4 py-3">
-            <input
-              ref={inputRef}
-              value={value}
-              onChange={e => onChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              className="flex-1 bg-transparent text-sm text-vscode-input-foreground placeholder:text-vscode-input-placeholderForeground focus:outline-none"
-              disabled={isLoading}
-            />
-          </div>
+    <div className="px-4 pb-4 pt-2">
+      <div
+        className={cn(
+          'relative flex flex-col rounded-xl bg-vscode-input-background overflow-visible transition-all',
+          'shadow-sm',
+          focused
+            ? 'border border-vscode-input-border/60 shadow-md'
+            : 'border border-transparent'
+        )}
+      >
+        {/* Input Row */}
+        <div className="flex items-center px-4 py-3">
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            placeholder={placeholder}
+            className="flex-1 bg-transparent text-sm text-vscode-input-foreground placeholder:text-vscode-input-placeholderForeground focus:outline-none"
+            disabled={isLoading}
+          />
+        </div>
 
-          {/* Bottom Action Bar */}
-          <div className="flex items-center justify-between px-3 py-2 border-t border-vscode-input-border">
-            {/* Left Actions */}
-            <div className="flex items-center gap-1">
-              <button className="flex items-center justify-center w-8 h-8 rounded-lg bg-vscode-button-background hover:bg-vscode-button-hoverBackground transition-colors">
-                <Search className="w-4 h-4 text-vscode-button-foreground" />
-              </button>
-              <button className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-vscode-toolbar-hoverBackground transition-colors text-vscode-descriptionForeground hover:text-foreground">
-                <Sparkles className="w-4 h-4" />
-              </button>
-              <button className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-vscode-toolbar-hoverBackground transition-colors text-vscode-descriptionForeground hover:text-foreground">
-                <Wrench className="w-4 h-4" />
-              </button>
-            </div>
+        {/* Bottom Bar */}
+        <div className="flex items-center justify-between px-2.5 pb-2.5">
+          {/* Left: Plus + Mode selector */}
+          <div className="flex items-center gap-1">
+            {/* Plus button */}
+            <button
+              className="flex items-center justify-center w-7 h-7 rounded-lg hover:bg-vscode-toolbar-hoverBackground transition-colors text-vscode-descriptionForeground hover:text-vscode-foreground"
+              title="Add to message"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
 
-            {/* Right Actions */}
-            <div className="flex items-center gap-1">
-              <button className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-vscode-toolbar-hoverBackground transition-colors text-vscode-descriptionForeground hover:text-foreground">
-                <Globe className="w-4 h-4" />
-              </button>
-              <button className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-vscode-toolbar-hoverBackground transition-colors text-vscode-descriptionForeground hover:text-foreground">
-                <ImageIcon className="w-4 h-4" />
-              </button>
-              <button className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-vscode-toolbar-hoverBackground transition-colors text-vscode-descriptionForeground hover:text-foreground">
-                <Paperclip className="w-4 h-4" />
-              </button>
-              <button className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-vscode-toolbar-hoverBackground transition-colors text-vscode-descriptionForeground hover:text-foreground">
-                <Mic className="w-4 h-4" />
-              </button>
+            {/* Mode dropdown trigger */}
+            <div className="relative" ref={dropdownRef}>
               <button
-                onClick={onSend}
-                disabled={!value.trim() || isLoading}
-                className={cn(
-                  "flex items-center justify-center w-8 h-8 rounded-lg transition-colors ml-1",
-                  value.trim() && !isLoading
-                    ? "bg-vscode-button-background hover:bg-vscode-button-hoverBackground text-vscode-button-foreground"
-                    : "bg-vscode-toolbar-hoverBackground text-vscode-descriptionForeground"
-                )}
+                onClick={() => setDropdownOpen(!dropdownOpen)}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] text-vscode-descriptionForeground hover:text-vscode-foreground hover:bg-vscode-toolbar-hoverBackground transition-colors"
               >
-                {isLoading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Send className="w-4 h-4" />
-                )}
+                <CurrentIcon className="w-3 h-3" />
+                <span className="hidden min-[200px]:inline">{currentConfig.label}</span>
+                <ChevronDown className={cn('w-2.5 h-2.5 transition-transform', dropdownOpen && 'rotate-180')} />
               </button>
+
+              {/* Dropdown menu */}
+              {dropdownOpen && (
+                <div className="absolute bottom-full left-0 mb-1.5 w-56 rounded-lg border border-vscode-panel-border bg-vscode-editorWidget-background shadow-lg overflow-hidden z-50">
+                  {(Object.keys(MODE_CONFIG) as ChatMode[]).map((m) => {
+                    const config = MODE_CONFIG[m]
+                    const Icon = config.icon
+                    const isActive = mode === m
+
+                    return (
+                      <button
+                        key={m}
+                        onClick={() => {
+                          setMode(m)
+                          setDropdownOpen(false)
+                        }}
+                        className={cn(
+                          'w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-colors',
+                          'hover:bg-vscode-list-hoverBackground',
+                          isActive && 'bg-vscode-list-hoverBackground'
+                        )}
+                      >
+                        <Icon className="w-4 h-4 mt-0.5 flex-shrink-0 text-vscode-descriptionForeground" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-vscode-foreground">
+                              {config.label}
+                            </span>
+                            {isActive && (
+                              <Check className="w-3.5 h-3.5 text-vscode-textLink-foreground" />
+                            )}
+                          </div>
+                          <p className="text-[11px] text-vscode-descriptionForeground mt-0.5">
+                            {config.description}
+                          </p>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Right: Send button */}
+          <button
+            onClick={onSend}
+            disabled={!value.trim() || isLoading}
+            className={cn(
+              'flex items-center justify-center w-7 h-7 rounded-lg transition-colors',
+              value.trim() && !isLoading
+                ? 'bg-vscode-foreground text-vscode-editor-background'
+                : 'bg-vscode-descriptionForeground/20 text-vscode-descriptionForeground/50'
+            )}
+          >
+            {isLoading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <ArrowUp className="w-3.5 h-3.5" strokeWidth={2.5} />
+            )}
+          </button>
         </div>
       </div>
     </div>
