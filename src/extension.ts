@@ -17,6 +17,7 @@ import {
   type ChatRequest,
   type AgentEvent,
 } from './services/agent-service'
+import { AuthService, type AuthState } from './services/auth-service'
 
 // Types for webview messages
 interface UnityProjectInfo {
@@ -42,9 +43,13 @@ type WebviewMessage =
   | { type: 'getThreadMessages'; threadId: string }
   | { type: 'deleteThread'; threadId: string }
   | { type: 'getConversationDetails'; threadId: string }
+  | { type: 'signIn' }
+  | { type: 'signOut' }
+  | { type: 'getAuthState' }
 
-// Global agent service instance
+// Global service instances
 let agentService: AgentService | null = null
+let authService: AuthService | null = null
 
 // Output channel for Movesia logs
 let outputChannel: vscode.OutputChannel | null = null
@@ -79,8 +84,32 @@ export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Movesia Agent')
   context.subscriptions.push(outputChannel)
 
-  log('========== EXTENSION ACTIVATING ==========')
-  console.log('[Extension] ========== EXTENSION ACTIVATING ==========')
+  log('Extension activating')
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // AUTH SERVICE — OAuth 2.1 PKCE client
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  authService = new AuthService(context, outputChannel ?? undefined)
+
+  // Initialize auth (restores cached user from SecretStorage)
+  authService.initialize().catch(err => {
+    log(`Auth init error: ${err?.message}`, 'warn')
+  })
+
+  // Note: OAuth callbacks are now received via a temporary localhost HTTP server
+  // started by AuthService.signIn() — no URI handler needed.
+
+  // Forward auth state changes to any open webview
+  context.subscriptions.push(
+    authService.onAuthStateChanged((state: AuthState) => {
+      log(`[Auth] State changed: authenticated=${state.isAuthenticated}, user=${state.user?.email || 'none'}`)
+      NextWebviewPanel.postMessageToAll({
+        type: 'authStateChanged',
+        state,
+      })
+    })
+  )
 
   const installer = createInstaller(context.extensionPath)
 
@@ -309,8 +338,56 @@ export function activate(context: vscode.ExtensionContext) {
         break
       }
 
+      case 'signIn': {
+        if (!authService) {
+          postMessage({ type: 'authStateChanged', state: { isAuthenticated: false, user: null, expiresAt: null } })
+          return
+        }
+        try {
+          const state = await authService.signIn()
+          postMessage({ type: 'authStateChanged', state })
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : 'Sign-in failed'
+          log(`Sign-in error: ${errorMessage}`, 'error')
+          postMessage({ type: 'authError', error: errorMessage })
+        }
+        break
+      }
+
+      case 'signOut': {
+        if (authService) {
+          await authService.signOut()
+        }
+        postMessage({ type: 'authStateChanged', state: { isAuthenticated: false, user: null, expiresAt: null } })
+        break
+      }
+
+      case 'getAuthState': {
+        if (!authService) {
+          postMessage({ type: 'authStateChanged', state: { isAuthenticated: false, user: null, expiresAt: null } })
+          return
+        }
+        const authState = await authService.getAuthState()
+        postMessage({ type: 'authStateChanged', state: authState })
+        break
+      }
+
       case 'chat': {
         // Handle chat messages - stream agent response back to webview
+
+        // ── Auth gate: user must be signed in to use chat ──
+        if (authService) {
+          const authenticated = await authService.isAuthenticated()
+          if (!authenticated) {
+            postMessage({
+              type: 'agentEvent',
+              event: { type: 'error', errorText: 'Please sign in to use Movesia.' },
+            })
+            postMessage({ type: 'agentEvent', event: { type: 'done' } })
+            return
+          }
+        }
+
         if (!agentService) {
           postMessage({
             type: 'agentEvent',
@@ -481,7 +558,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('NextWebview1.start', async () => {
       // Check if there's a previously selected project
       const savedProjectPath = context.workspaceState.get<string>(SELECTED_PROJECT_KEY)
-      let initialRoute = 'projectSelector'
+      let initialRoute = 'signIn'
 
       if (savedProjectPath) {
         // Verify the project still exists
@@ -636,7 +713,29 @@ export function activate(context: vscode.ExtensionContext) {
       async (): Promise<string | undefined> => {
         return selectUnityProject()
       }
-    )
+    ),
+
+    // Auth commands
+    vscode.commands.registerCommand('movesia.signIn', async () => {
+      if (!authService) {
+        vscode.window.showErrorMessage('Auth service not initialized')
+        return
+      }
+      try {
+        await authService.signIn()
+        vscode.window.showInformationMessage('Signed in to Movesia successfully!')
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Sign-in failed'
+        vscode.window.showErrorMessage(`Sign-in failed: ${msg}`)
+      }
+    }),
+
+    vscode.commands.registerCommand('movesia.signOut', async () => {
+      if (authService) {
+        await authService.signOut()
+        vscode.window.showInformationMessage('Signed out of Movesia')
+      }
+    })
   )
 }
 
@@ -721,6 +820,10 @@ export async function deactivate() {
   if (agentService) {
     await agentService.shutdown()
     agentService = null
+  }
+  if (authService) {
+    authService.dispose()
+    authService = null
   }
   console.log('[Extension] Movesia extension deactivated')
 }

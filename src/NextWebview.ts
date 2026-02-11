@@ -97,6 +97,20 @@ export class NextWebviewPanel extends NextWebview implements vscode.Disposable {
   private readonly panel: vscode.WebviewPanel
   private _disposables: vscode.Disposable[] = []
 
+  /**
+   * Send a message to all open webview panels.
+   * Used for broadcasting auth state changes, etc.
+   */
+  public static postMessageToAll(message: any): void {
+    for (const instance of Object.values(NextWebviewPanel.instances)) {
+      try {
+        instance.postMessage(message)
+      } catch {
+        // Panel may have been disposed — ignore
+      }
+    }
+  }
+
   // Singleton
   public static async getInstance(
     opts: NextWebviewOptions & { column?: vscode.ViewColumn; lockPanel?: boolean }

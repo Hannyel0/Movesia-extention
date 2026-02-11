@@ -1,7 +1,8 @@
 {
-  "name": "@githubnext/vscode-react-webviews",
+  "name": "movesia-extension",
+  "publisher": "movesia",
   "version": "1.0.0",
-  "description": "A sample/starter template for developing VS Code extensions with webviews",
+  "description": "Movesia AI — Unity development assistant",
   "main": "out/extension.js",
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -114,6 +115,16 @@
       {
         "command": "movesia.selectUnityProject",
         "title": "Select Unity Project",
+        "category": "Movesia"
+      },
+      {
+        "command": "movesia.signIn",
+        "title": "Sign In",
+        "category": "Movesia"
+      },
+      {
+        "command": "movesia.signOut",
+        "title": "Sign Out",
         "category": "Movesia"
       }
     ]

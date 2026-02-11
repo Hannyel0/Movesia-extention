@@ -53,9 +53,26 @@ start → text-start → text-delta* → text-end → tool-input-start → tool-
 
 Tool call lifecycle: `tool-input-start` (running) → `tool-input-available` (input shown) → `tool-output-available` (completed) or `error`.
 
-### Unity Connection
+**Tool Input Unwrapping**: LangGraph streamEvents v2 wraps tool args inside `{ input: "<json-string>" }`. The `unwrapToolInput()` function in `agent-service.ts` extracts and parses the inner value so UI components receive actual arguments.
 
-`src/agent/UnityConnection/` — Modular WebSocket system. `UnityManager.ts` is the main entry point, supported by `config.ts`, `transport.ts`, `sessions.ts`, `heartbeat.ts`, `router.ts`. WebSocket endpoint at `/ws/unity`. Uses message ID correlation for request/response routing.
+### Unity Connection (Connect-All Architecture)
+
+`src/agent/UnityConnection/` — Modular WebSocket system implementing **Option B (connect-all)**:
+
+- **All Unity instances connect** and stay connected regardless of project
+- **Commands route only to the target project** (set via `UnityManager.setTargetProject()`)
+- **Non-target connections stay idle** (heartbeats only)
+- **Instant project switching** — no reconnection needed when changing targets
+
+Key files:
+- `UnityManager.ts` — Main entry point, manages multiple sessions
+- `sessions.ts` — Session management with monotonic takeover (newer connSeq wins)
+- `heartbeat.ts` — Keepalive with compilation-aware suspension
+- `router.ts` — Message routing with ACK support
+- `transport.ts` — Low-level WebSocket send/receive
+- `config.ts` — Logging and configuration
+
+**WebSocket server starts lazily** when first project is selected (not at extension activation).
 
 ### Unity Tools (6 Tools)
 
@@ -72,11 +89,18 @@ All in `src/agent/unity-tools/`, targeting **Unity 6** (6000.x) API:
 
 **Critical**: Always call `unity_refresh` after creating scripts before adding components.
 
+Tool connection flow: Tools → `callUnityAsync()` (in `connection.ts`) → `UnityManager.sendAndWait()` → WebSocket → Unity
+
 ### Persistence
 
-- `src/agent/database/SqlJsCheckpointer.ts` — Custom LangGraph checkpointer using sql.js (WASM SQLite).
-- Storage: `~/.movesia/checkpoints.sqlite`
-- `src/agent/database/repository.ts` — `ConversationRepository` and `MessageRepository` for thread CRUD.
+**Single shared sql.js database** for both conversations and LangGraph checkpoints:
+
+- `src/agent/database/engine.ts` — Initializes sql.js, creates single `Database` instance
+- `src/agent/database/SqlJsCheckpointer.ts` — LangGraph checkpointer using shared db instance
+- `src/agent/database/repository.ts` — `ConversationRepository` for thread CRUD
+- **Storage**: VS Code's `globalStorageUri` (e.g., `~/.vscode/data/.../globalStorage/movesia/movesia.db`)
+
+The single instance pattern avoids dual-instance bugs where two in-memory copies would overwrite each other on persist.
 
 ### Pluggable Tool UI
 
@@ -94,10 +118,13 @@ Registration happens in `registerCustomToolUIs.ts`. Built-in UIs: `UnityQueryUI`
 ## Key Patterns
 
 - **Singleton webviews**: One panel instance per route via static `instances` map
+- **Connect-all WebSockets**: Accept all Unity connections, route to target project only
+- **Lazy WebSocket server**: Starts when project is selected, not at activation
 - **Interrupt/checkpoint**: Agent pauses for async Unity ops (compilation), resumes with result
 - **VS Code theme integration**: Tailwind classes map to CSS variables (`bg-vscode-editor-background`)
 - **Onboarding flow**: Project selection → Package installation → Chat (route-based navigation)
 - **Zod pinned**: `zod` version is pinned to `3.25.67` with overrides for LangChain compatibility
+- **Shared db instance**: Single sql.js database shared between checkpointer and conversations
 
 ## Common Tasks
 
@@ -115,9 +142,31 @@ Edit `src/agent/agent.ts` — change the `modelName` in `createModel()`.
 
 Edit `src/agent/prompts.ts` — modify `UNITY_AGENT_PROMPT`.
 
+### Switching Target Unity Project
+
+```typescript
+// From extension code
+await agentService.setProjectPath('/path/to/unity/project');
+
+// UnityManager routes commands to matching connection automatically
+```
+
+## Dependencies
+
+Key packages:
+- `@langchain/langgraph` v1.1.3 — Agent framework
+- `@langchain/openai` — OpenRouter integration
+- `@langchain/tavily` — Optional internet search tool
+- `sql.js` v1.13.0 — WASM SQLite for persistence
+- `react` v19.2.4 — Webview UI
+- `ws` v8.18.0 — WebSocket server
+- `zod` v3.25.67 — Schema validation (pinned for LangChain compatibility)
+
 ## Troubleshooting
 
 - **Agent not responding**: Check "Movesia Agent" output panel. Verify API key in `agent-service.ts` is valid.
 - **Unity tools failing**: Unity Editor must be running with Movesia package installed. Status indicator should be green.
-- **Database errors**: Delete `~/.movesia/checkpoints.sqlite` to reset (loses conversations).
+- **Database errors**: Delete the db file in VS Code's globalStorage to reset (loses conversations). Find path via `context.globalStorageUri.fsPath`.
 - **Build errors**: Clean with `rm -rf out/ && npm run compile`. Reinstall with `rm -rf node_modules && npm install`.
+- **Multi-Unity reconnect loops**: Fixed in current architecture — all Unity instances stay connected, only commands route to target.
+- **Tool UI shows raw JSON**: Ensure `unwrapToolInput()` is handling LangGraph's wrapped format correctly.
