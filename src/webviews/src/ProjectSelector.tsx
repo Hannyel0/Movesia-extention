@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FolderSearch, RefreshCw, FolderOpen, Loader2, AlertCircle } from 'lucide-react'
+import { RefreshCw, FolderOpen, Loader2, AlertCircle, Search } from 'lucide-react'
 import { Button } from './lib/components/ui/button'
 import { ScrollArea } from './lib/components/ui/scroll-area'
 import { ProjectCard } from './lib/components/ProjectCard'
@@ -13,6 +13,7 @@ function ProjectSelector() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [checkingProject, setCheckingProject] = useState<string | null>(null)
+  const [unityRunning, setUnityRunning] = useState<Record<string, boolean>>({})
   const initialLoadDone = useRef(false)
 
   const handleMessage = useCallback(
@@ -35,7 +36,6 @@ function ProjectSelector() {
           break
 
         case 'packageStatus':
-          // Update project with installation status
           setProjects(prev =>
             prev.map(p =>
               p.path === response.projectPath
@@ -48,7 +48,6 @@ function ProjectSelector() {
 
         case 'browseResult':
           if (response.project) {
-            // Add the new project to the list if not already present
             setProjects(prev => {
               const exists = prev.some(p => p.path === response.project!.path)
               if (exists) {
@@ -61,23 +60,33 @@ function ProjectSelector() {
           }
           break
 
-        // Note: 'selectedProject' response is handled but we navigate directly in handleProjectClick
-        // so we don't need to handle it here
+        case 'unityRunningStatus':
+          setUnityRunning(prev => ({
+            ...prev,
+            [response.projectPath]: response.isRunning,
+          }))
+          break
       }
     },
     []
   )
 
-  const { getUnityProjects, checkPackageStatus, setSelectedProject, browseForProject } =
+  const { getUnityProjects, checkPackageStatus, setSelectedProject, browseForProject, checkUnityRunning } =
     useProjectMessages(handleMessage)
 
-  // Load projects only once on mount
   useEffect(() => {
     if (!initialLoadDone.current) {
       initialLoadDone.current = true
       getUnityProjects()
     }
   }, [getUnityProjects])
+
+  // Check Unity running status for each project when the list loads
+  useEffect(() => {
+    if (projects.length > 0) {
+      projects.forEach(p => checkUnityRunning(p.path))
+    }
+  }, [projects, checkUnityRunning])
 
   const handleRefresh = () => {
     setLoading(true)
@@ -87,13 +96,8 @@ function ProjectSelector() {
 
   const handleProjectClick = (project: UnityProjectInfo) => {
     console.log('[ProjectSelector] handleProjectClick called', project)
-
-    // Set the selected project (for persistence)
     setSelectedProject(project.path)
 
-    // Simple routing based on package installation:
-    // - Package installed → go to ChatView (ChatView will check if Unity is open)
-    // - Package not installed → go to InstallPackage
     if (project.movesiaInstalled) {
       console.log('[ProjectSelector] Package installed -> /chatView')
       navigate('/chatView')
@@ -108,95 +112,115 @@ function ProjectSelector() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-vscode-editor-background text-vscode-foreground">
-      {/* Header */}
-      <header className="flex-shrink-0 px-6 py-5 border-b border-vscode-panel-border">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-vscode-textLink-foreground/10">
-            <FolderSearch className="w-5 h-5 text-vscode-textLink-foreground" />
-          </div>
-          <div>
-            <h1 className="text-lg font-semibold">Select Unity Project</h1>
-            <p className="text-sm text-vscode-descriptionForeground">
-              Choose a project to connect with Movesia AI
-            </p>
-          </div>
-        </div>
-      </header>
+    <div className="flex flex-col h-screen bg-vscode-sideBar-background text-vscode-foreground">
+      <div className="flex-1 flex flex-col items-center px-6 pt-10">
+        <div className="w-full max-w-sm">
+          {/* Header */}
+          <h1 className="text-lg font-semibold tracking-tight text-center mb-8">Select Project</h1>
 
-      {/* Content */}
-      <div className="flex-1 overflow-hidden">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3">
-            <Loader2 className="w-8 h-8 animate-spin text-vscode-textLink-foreground" />
-            <p className="text-sm text-vscode-descriptionForeground">Scanning for Unity projects...</p>
-          </div>
-        ) : error ? (
-          <div className="flex flex-col items-center justify-center h-full gap-4 px-6">
-            <AlertCircle className="w-12 h-12 text-vscode-errorForeground" />
-            <div className="text-center">
-              <h2 className="font-medium text-vscode-errorForeground">Failed to load projects</h2>
-              <p className="text-sm text-vscode-descriptionForeground mt-1">{error}</p>
-            </div>
-            <Button variant="outline" onClick={handleRefresh}>
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Try Again
-            </Button>
-          </div>
-        ) : projects.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-4 px-6">
-            <FolderSearch className="w-12 h-12 text-vscode-descriptionForeground" />
-            <div className="text-center">
-              <h2 className="font-medium">No Unity projects found</h2>
-              <p className="text-sm text-vscode-descriptionForeground mt-1">
-                We couldn't find any Unity projects in Unity Hub.
-                <br />
-                Try browsing for a project manually.
+          {/* Content */}
+          {loading ? (
+            <div className="flex flex-col items-center py-16 gap-3">
+              <Loader2 className="w-6 h-6 animate-spin text-vscode-textLink-foreground" />
+              <p className="text-xs text-vscode-descriptionForeground">
+                Scanning for Unity projects...
               </p>
             </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={handleBrowse}>
-                <FolderOpen className="w-4 h-4 mr-2" />
-                Browse...
-              </Button>
-              <Button variant="ghost" onClick={handleRefresh}>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Refresh
+          ) : error ? (
+            <div className="flex flex-col items-center py-16 gap-4">
+              <div className="flex items-center justify-center w-10 h-10 rounded-full bg-vscode-errorForeground/10">
+                <AlertCircle className="w-5 h-5 text-vscode-errorForeground" />
+              </div>
+              <div className="text-center">
+                <p className="text-sm font-medium text-vscode-errorForeground">
+                  Failed to load projects
+                </p>
+                <p className="text-xs text-vscode-descriptionForeground mt-1">{error}</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={handleRefresh}>
+                <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                Try Again
               </Button>
             </div>
-          </div>
-        ) : (
-          <ScrollArea className="h-full">
-            <div className="p-4 space-y-3">
-              {projects.map(project => (
-                <ProjectCard
-                  key={project.path}
-                  project={project}
-                  onClick={() => handleProjectClick(project)}
-                  isLoading={checkingProject === project.path}
-                  disabled={checkingProject !== null}
-                />
-              ))}
+          ) : projects.length === 0 ? (
+            <div className="flex flex-col items-center py-16 gap-4">
+              <div className="flex items-center justify-center w-10 h-10 rounded-full bg-vscode-descriptionForeground/10">
+                <Search className="w-5 h-5 text-vscode-descriptionForeground" />
+              </div>
+              <div className="text-center">
+                <p className="text-sm font-medium">No projects found</p>
+                <p className="text-xs text-vscode-descriptionForeground mt-1">
+                  We couldn't detect any Unity projects.
+                  <br />
+                  Browse for one manually.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" onClick={handleBrowse}>
+                  <FolderOpen className="w-3.5 h-3.5 mr-1.5" />
+                  Browse
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleRefresh}>
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                  Refresh
+                </Button>
+              </div>
             </div>
-          </ScrollArea>
-        )}
+          ) : (
+            <>
+              {/* Project list header */}
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs text-vscode-descriptionForeground">
+                  {projects.length} project{projects.length !== 1 ? 's' : ''} found
+                </p>
+                <div className="flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={handleRefresh}
+                    title="Refresh"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={handleBrowse}
+                    title="Browse for project"
+                  >
+                    <FolderOpen className="w-3 h-3" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Project list */}
+              <ScrollArea className="max-h-[calc(100vh-260px)]">
+                <div className="space-y-1.5">
+                  {projects.map(project => (
+                    <ProjectCard
+                      key={project.path}
+                      project={project}
+                      onClick={() => handleProjectClick(project)}
+                      isLoading={checkingProject === project.path}
+                      disabled={checkingProject !== null}
+                      unityRunning={unityRunning[project.path] ?? false}
+                    />
+                  ))}
+                </div>
+              </ScrollArea>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Footer */}
-      {!loading && !error && projects.length > 0 && (
-        <footer className="flex-shrink-0 px-4 py-3 border-t border-vscode-panel-border">
-          <div className="flex justify-between items-center">
-            <Button variant="ghost" size="sm" onClick={handleBrowse}>
-              <FolderOpen className="w-4 h-4 mr-2" />
-              Browse...
-            </Button>
-            <Button variant="ghost" size="sm" onClick={handleRefresh}>
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Refresh
-            </Button>
-          </div>
-        </footer>
-      )}
+      <footer className="flex-shrink-0 py-4 px-6">
+        <p className="text-center text-xs text-vscode-descriptionForeground">
+          Projects are detected from Unity Hub
+        </p>
+      </footer>
     </div>
   )
 }

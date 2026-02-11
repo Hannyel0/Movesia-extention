@@ -1,5 +1,5 @@
 import React from 'react'
-import { Check, Circle, Loader2 } from 'lucide-react'
+import { Check, Loader2 } from 'lucide-react'
 import { cn } from '../utils'
 import { Button } from './ui/button'
 
@@ -22,36 +22,36 @@ export interface OnboardingStepProps {
     onClick: () => void
     disabled?: boolean
   }
-  /** Whether this is the last step (no bottom border) */
+  /** Whether this is the last step (no connector line) */
   isLast?: boolean
 }
 
-// Status indicator component
-function StatusIndicator({ status }: { status: StepStatus }) {
+// Minimal status dot
+function StatusDot({ status }: { status: StepStatus }) {
   switch (status) {
     case 'completed':
       return (
-        <div className="flex items-center justify-center w-5 h-5 rounded-full bg-green-500/20">
-          <Check className="w-3 h-3 text-green-500" />
-        </div>
-      )
-    case 'active':
-      return (
-        <div className="flex items-center justify-center w-5 h-5 rounded-full bg-vscode-textLink-foreground/20">
-          <Circle className="w-2.5 h-2.5 fill-vscode-textLink-foreground text-vscode-textLink-foreground" />
+        <div className="flex items-center justify-center w-5 h-5 rounded-full bg-vscode-testing-iconPassed/15">
+          <Check className="w-3 h-3 text-vscode-testing-iconPassed" />
         </div>
       )
     case 'loading':
       return (
-        <div className="flex items-center justify-center w-5 h-5 rounded-full bg-vscode-textLink-foreground/20">
-          <Loader2 className="w-3 h-3 text-vscode-textLink-foreground animate-spin" />
+        <div className="flex items-center justify-center w-5 h-5">
+          <Loader2 className="w-3.5 h-3.5 text-vscode-textLink-foreground animate-spin" />
+        </div>
+      )
+    case 'active':
+      return (
+        <div className="flex items-center justify-center w-5 h-5">
+          <div className="w-2 h-2 rounded-full bg-vscode-textLink-foreground" />
         </div>
       )
     case 'pending':
     default:
       return (
-        <div className="flex items-center justify-center w-5 h-5 rounded-full bg-vscode-descriptionForeground/20">
-          <Circle className="w-2.5 h-2.5 text-vscode-descriptionForeground" />
+        <div className="flex items-center justify-center w-5 h-5">
+          <div className="w-2 h-2 rounded-full bg-vscode-descriptionForeground/30" />
         </div>
       )
   }
@@ -59,7 +59,7 @@ function StatusIndicator({ status }: { status: StepStatus }) {
 
 /**
  * A single step in the onboarding flow.
- * Displays an icon, title, description, status indicator, and optional action button.
+ * Displays a status dot, vertical connector, title, description, and optional action.
  */
 export function OnboardingStep({
   icon,
@@ -75,83 +75,68 @@ export function OnboardingStep({
   const isPending = status === 'pending'
 
   return (
-    <div
-      className={cn(
-        'flex items-start gap-4 p-4 rounded-lg transition-colors',
-        !isLast && 'border-b border-vscode-panel-border',
-        isActive && 'bg-vscode-list-hoverBackground'
-      )}
-    >
-      {/* Icon */}
-      <div
-        className={cn(
-          'flex items-center justify-center w-10 h-10 rounded-lg flex-shrink-0',
-          isCompleted && 'bg-green-500/10',
-          isActive && 'bg-vscode-textLink-foreground/10',
-          isPending && 'bg-vscode-descriptionForeground/10'
+    <div className="flex gap-3">
+      {/* Left: dot + connector line */}
+      <div className="flex flex-col items-center pt-0.5">
+        <StatusDot status={status} />
+        {!isLast && (
+          <div
+            className={cn(
+              'w-px flex-1 mt-1.5',
+              isCompleted ? 'bg-vscode-testing-iconPassed/25' : 'bg-vscode-panel-border'
+            )}
+          />
         )}
-      >
-        <div
-          className={cn(
-            'w-5 h-5',
-            isCompleted && 'text-green-500',
-            isActive && 'text-vscode-textLink-foreground',
-            isPending && 'text-vscode-descriptionForeground'
-          )}
-        >
-          {icon}
-        </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 min-w-0">
+      {/* Right: content */}
+      <div className={cn('pb-6', isLast && 'pb-0')}>
         <div className="flex items-center gap-2">
-          <h3
+          <span
             className={cn(
-              'font-medium',
-              isCompleted && 'text-green-500',
+              'text-sm font-medium',
+              isCompleted && 'text-vscode-testing-iconPassed',
               isActive && 'text-vscode-foreground',
-              isPending && 'text-vscode-descriptionForeground'
+              isPending && 'text-vscode-descriptionForeground/60'
             )}
           >
             {title}
-          </h3>
-          <StatusIndicator status={status} />
+          </span>
+          {badge && (
+            <span
+              className={cn(
+                'text-[10px] px-1.5 py-px rounded',
+                isCompleted
+                  ? 'bg-vscode-testing-iconPassed/10 text-vscode-testing-iconPassed'
+                  : 'bg-vscode-badge-background text-vscode-badge-foreground'
+              )}
+            >
+              {badge}
+            </span>
+          )}
         </div>
         <p
           className={cn(
-            'text-sm mt-0.5',
-            isPending ? 'text-vscode-descriptionForeground/60' : 'text-vscode-descriptionForeground'
+            'text-xs mt-0.5',
+            isPending ? 'text-vscode-descriptionForeground/40' : 'text-vscode-descriptionForeground'
           )}
         >
           {description}
         </p>
-        {badge && (
-          <span
-            className={cn(
-              'inline-block text-xs px-2 py-0.5 rounded mt-2',
-              isCompleted && 'bg-green-500/10 text-green-500',
-              isActive && 'bg-vscode-badge-background text-vscode-badge-foreground',
-              isPending && 'bg-vscode-descriptionForeground/10 text-vscode-descriptionForeground'
-            )}
+
+        {/* Action button */}
+        {action && isActive && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={action.onClick}
+            disabled={action.disabled}
+            className="mt-2 h-7 text-xs"
           >
-            {badge}
-          </span>
+            {action.label}
+          </Button>
         )}
       </div>
-
-      {/* Action button */}
-      {action && isActive && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={action.onClick}
-          disabled={action.disabled}
-          className="flex-shrink-0"
-        >
-          {action.label}
-        </Button>
-      )}
     </div>
   )
 }

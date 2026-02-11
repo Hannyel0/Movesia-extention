@@ -1,5 +1,5 @@
 import React from 'react'
-import { Folder, Check, AlertCircle, Loader2 } from 'lucide-react'
+import { Loader2, ChevronRight } from 'lucide-react'
 import { cn } from '../utils'
 import type { UnityProjectInfo } from '../types/project'
 
@@ -8,58 +8,55 @@ interface ProjectCardProps {
   onClick: () => void
   isLoading?: boolean
   disabled?: boolean
+  unityRunning?: boolean
 }
 
-export function ProjectCard({ project, onClick, isLoading, disabled }: ProjectCardProps) {
+export function ProjectCard({ project, onClick, isLoading, disabled, unityRunning }: ProjectCardProps) {
   return (
     <button
       onClick={onClick}
       disabled={disabled || isLoading}
       className={cn(
-        'w-full text-left p-4 rounded-lg border transition-colors',
-        'bg-vscode-editor-background border-vscode-panel-border',
-        'hover:bg-vscode-list-hoverBackground hover:border-vscode-focusBorder',
-        'focus:outline-none focus:ring-2 focus:ring-vscode-focusBorder',
+        'w-full text-left px-3.5 py-3 rounded-md transition-colors group',
+        'hover:bg-vscode-list-hoverBackground',
+        'focus:outline-none focus:ring-1 focus:ring-vscode-focusBorder',
         'disabled:opacity-50 disabled:cursor-not-allowed'
       )}
     >
-      <div className="flex items-start gap-3">
-        <div className="flex-shrink-0 mt-0.5">
-          <Folder className="w-5 h-5 text-vscode-textLink-foreground" />
+      <div className="flex items-center gap-3">
+        {/* Status indicator dot — Unity open/closed */}
+        <div className="flex-shrink-0 relative">
+          {isLoading ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-vscode-textLink-foreground" />
+          ) : unityRunning ? (
+            <div className="relative flex items-center justify-center w-3 h-3">
+              <div className="absolute w-2.5 h-2.5 rounded-full bg-vscode-testing-iconPassed/30 animate-[pulse-dot_2s_ease-in-out_infinite]" />
+              <div className="w-2 h-2 rounded-full bg-vscode-testing-iconPassed" />
+            </div>
+          ) : (
+            <div className="w-2 h-2 rounded-full bg-vscode-descriptionForeground/40" />
+          )}
         </div>
+
+        {/* Project info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="font-medium text-vscode-foreground truncate">{project.name}</h3>
+            <span className="text-sm font-medium text-vscode-foreground truncate">
+              {project.name}
+            </span>
             {project.editorVersion && (
-              <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded bg-vscode-badge-background text-vscode-badge-foreground">
-                Unity {project.editorVersion}
+              <span className="flex-shrink-0 text-[10px] px-1.5 py-px rounded bg-vscode-badge-background text-vscode-badge-foreground">
+                {project.editorVersion}
               </span>
             )}
           </div>
-          <p className="text-xs text-vscode-descriptionForeground mt-1 truncate">{project.path}</p>
-          <div className="flex items-center gap-1.5 mt-2">
-            {isLoading ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-vscode-textLink-foreground" />
-                <span className="text-xs text-vscode-descriptionForeground">Checking...</span>
-              </>
-            ) : project.movesiaInstalled ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-vscode-testing-iconPassed" />
-                <span className="text-xs text-vscode-testing-iconPassed">
-                  Movesia installed{project.movesiaVersion ? ` (v${project.movesiaVersion})` : ''}
-                </span>
-              </>
-            ) : (
-              <>
-                <AlertCircle className="w-3.5 h-3.5 text-vscode-editorWarning-foreground" />
-                <span className="text-xs text-vscode-editorWarning-foreground">
-                  Movesia not installed
-                </span>
-              </>
-            )}
-          </div>
+          <p className="text-[11px] text-vscode-descriptionForeground truncate mt-0.5">
+            {project.path}
+          </p>
         </div>
+
+        {/* Arrow */}
+        <ChevronRight className="w-3.5 h-3.5 text-vscode-descriptionForeground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
       </div>
     </button>
   )

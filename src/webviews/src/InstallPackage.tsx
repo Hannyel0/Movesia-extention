@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   Package,
-  FolderSync,
+  ArrowLeft,
   Folder,
   ExternalLink,
   RefreshCw,
@@ -222,23 +222,27 @@ function InstallPackage() {
     stepStatuses.syncAssets === 'completed'
 
   return (
-    <div className="flex flex-col h-screen bg-vscode-editor-background text-vscode-foreground">
-      {/* Header */}
-      <header className="flex-shrink-0 px-4 py-3 border-b border-vscode-panel-border">
-        <Button variant="ghost" size="sm" onClick={handleChangeProject} className="gap-2">
-          <FolderSync className="w-4 h-4" />
-          Change Project
-        </Button>
-      </header>
-
+    <div className="flex flex-col h-screen bg-vscode-sideBar-background text-vscode-foreground">
       {/* Content */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6 py-8 overflow-auto">
-        <div className="max-w-lg w-full">
-          {/* Title */}
-          <h1 className="text-2xl font-semibold text-center mb-8">Get Started</h1>
+      <div className="flex-1 flex flex-col items-center px-6 pt-10 overflow-auto">
+        <div className="w-full max-w-sm">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-8">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={handleChangeProject}
+              title="Change project"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+            <h1 className="text-lg font-semibold tracking-tight">Get Started</h1>
+            <div className="w-7" />
+          </div>
 
-          {/* Steps Card */}
-          <div className="rounded-xl border border-vscode-panel-border bg-vscode-editor-background overflow-hidden">
+          {/* Steps */}
+          <div className="pl-1">
             {/* Step 1: Link Unity Project */}
             <OnboardingStep
               icon={<Folder className="w-5 h-5" />}
@@ -255,18 +259,18 @@ function InstallPackage() {
                 installState === 'error'
                   ? errorMessage || 'Installation failed. Please try again.'
                   : installState === 'installing'
-                    ? 'Installing package files to your Unity project...'
+                    ? 'Installing package files...'
                     : installState === 'success'
                       ? 'Plugin installed successfully!'
-                      : 'Enables AI-powered Unity development in your project.'
+                      : 'Enables AI-powered development in your project.'
               }
               status={stepStatuses.installPackage}
-              badge={`Version - ${installedVersion || PACKAGE_VERSION}`}
+              badge={`v${installedVersion || PACKAGE_VERSION}`}
               action={
                 installState === 'idle'
-                  ? { label: 'Install plugin', onClick: handleInstall }
+                  ? { label: 'Install', onClick: handleInstall }
                   : installState === 'error'
-                    ? { label: 'Try again', onClick: handleRetry }
+                    ? { label: 'Retry', onClick: handleRetry }
                     : undefined
               }
             />
@@ -277,10 +281,10 @@ function InstallPackage() {
               title="Open Unity"
               description={
                 stepStatuses.openUnity === 'completed'
-                  ? `Unity is running with ${projectName}!`
+                  ? `Unity is running with ${projectName}`
                   : stepStatuses.openUnity === 'loading'
                     ? 'Checking if Unity is running...'
-                    : 'Open this project in Unity Editor to continue.'
+                    : 'Open this project in Unity Editor.'
               }
               status={stepStatuses.openUnity}
             />
@@ -293,35 +297,33 @@ function InstallPackage() {
                 stepStatuses.syncAssets === 'completed'
                   ? 'Connected and ready to go!'
                   : stepStatuses.syncAssets === 'loading'
-                    ? 'Unity is compiling the Movesia plugin...'
+                    ? 'Compiling the Movesia plugin...'
                     : stepStatuses.syncAssets === 'active'
-                      ? 'Click on the Unity Editor window to trigger script compilation.'
-                      : 'Once Unity compiles the plugin, the agent will connect automatically.'
+                      ? 'Click on the Unity window to trigger compilation.'
+                      : 'The agent will connect after Unity compiles the plugin.'
               }
               status={stepStatuses.syncAssets}
               isLast
             />
           </div>
-
-          {/* Footer info */}
-          <div className="mt-6 text-center">
-            <p className="text-sm text-vscode-descriptionForeground">
-              {allStepsCompleted
-                ? 'All set! Redirecting to chat...'
-                : 'A Unity project must be open and connected to continue.'}
-            </p>
-            <a
-              href="https://docs.movesia.ai"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-sm text-vscode-textLink-foreground hover:underline mt-2"
-            >
-              Need help? View product docs
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
         </div>
       </div>
+
+      {/* Footer */}
+      <footer className="flex-shrink-0 py-4 px-6 text-center">
+        <p className="text-xs text-vscode-descriptionForeground">
+          {allStepsCompleted ? 'All set! Redirecting to chat...' : ''}
+        </p>
+        <a
+          href="https://docs.movesia.ai"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-xs text-vscode-textLink-foreground hover:underline mt-1"
+        >
+          Need help?
+          <ExternalLink className="w-2.5 h-2.5" />
+        </a>
+      </footer>
     </div>
   )
 }

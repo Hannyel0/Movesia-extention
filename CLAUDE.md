@@ -16,30 +16,39 @@ npm run format         # Prettier
 
 **Development workflow**: Press F5 in VS Code — `.vscode/tasks.json` runs both `tsc watch` and `vite build` in parallel. The `npm run watch` script only runs tsc.
 
+**Build config**: `vite.config.mjs` uses `@tailwindcss/vite` and `@vitejs/plugin-react`. Output goes to `out/webviews/`. No PostCSS config needed (Tailwind v4).
+
 ## Architecture
 
 ### Key Files
 
-- `src/extension.ts` — Entry point. Initializes `AgentService`, registers commands (`NextWebview1.start`, `movesia.installUnityPackage`, etc.), routes webview messages.
-- `src/services/agent-service.ts` — Bridges webview ↔ LangGraph agent. Uses `UIMessageStreamProtocol` (Vercel AI SDK protocol v1) over `postMessage`. API keys are hardcoded for SaaS deployment.
+- `src/extension.ts` — Entry point. Initializes `AgentService` and `AuthService`, registers commands, routes webview messages.
+- `src/services/agent-service.ts` — Bridges webview ↔ LangGraph agent. Uses `UIMessageStreamProtocol` (Vercel AI SDK protocol v1) over `postMessage`. API keys are hardcoded for SaaS deployment. Enforces auth gate before agent use.
+- `src/services/auth-service.ts` — OAuth 2.1 PKCE client. Handles login flow, token storage/refresh, user info.
 - `src/NextWebview.ts` — Singleton webview panels. Outputs: `out/webviews/index.js` and `out/webviews/style.css`.
 - `src/agent/agent.ts` — LangGraph agent factory. Model: `anthropic/claude-haiku-4.5` via OpenRouter.
 - `src/agent/prompts.ts` — System prompt (Unity 6 API focused).
 
 ### Webview Routes
 
-`MemoryRouter` in `src/webviews/src/index.tsx`. Default route is `projectSelector`.
+`MemoryRouter` in `src/webviews/src/index.tsx`. Default route is `/signIn`.
 
-| Route | View | Purpose |
-|-------|------|---------|
-| `/projectSelector` | `ProjectSelector.tsx` | Unity project selection (default) |
-| `/installPackage` | `InstallPackage.tsx` | Unity package installation |
-| `/chatView` | `ChatView.tsx` | Main chat interface |
-| `/view2` | `View2.tsx` | Zustand demo |
+| Route | View | Auth | Purpose |
+|-------|------|------|---------|
+| `/signIn` | `SignIn.tsx` | Public | OAuth sign-in page (default) |
+| `/projectSelector` | `ProjectSelector.tsx` | Protected | Unity project selection |
+| `/installPackage` | `InstallPackage.tsx` | Protected | Unity package installation |
+| `/chatView` | `ChatView.tsx` | Protected | Main chat interface |
+| `/view2` | `View2.tsx` | Protected | Zustand demo |
+
+**Route guards**: `AuthGate` wraps all routes — redirects unauthenticated users to `/signIn` and authenticated users away from `/signIn` to `/projectSelector`. `RequireAuth` wraps each protected route individually.
+
+**Initial route selection** (in `extension.ts`): Defaults to `signIn`. If a saved project path exists and the package is installed with Unity open, skips straight to `chatView`; otherwise goes to `installPackage`.
 
 ### State Management
 
 - **`useChatState`** (`lib/hooks/useChatState.ts`) — Primary chat hook. Custom implementation (no AI SDK dependency). Handles streaming via `postMessage`.
+- **`useAuthState`** (`lib/hooks/useAuthState.ts`) — Auth state hook. Listens for `authStateChanged` messages from the extension host.
 - **`useVSCodeState`** (`lib/state/reactState.tsx`) — Persists state to VS Code storage API.
 - **Zustand** (`lib/state/zustandState.tsx`) — `createVSCodeZustand` wraps Zustand with VS Code persistence.
 
@@ -54,6 +63,32 @@ start → text-start → text-delta* → text-end → tool-input-start → tool-
 Tool call lifecycle: `tool-input-start` (running) → `tool-input-available` (input shown) → `tool-output-available` (completed) or `error`.
 
 **Tool Input Unwrapping**: LangGraph streamEvents v2 wraps tool args inside `{ input: "<json-string>" }`. The `unwrapToolInput()` function in `agent-service.ts` extracts and parses the inner value so UI components receive actual arguments.
+
+### Authentication (OAuth 2.1 PKCE)
+
+`src/services/auth-service.ts` — Full OAuth 2.1 authorization code flow with PKCE (S256).
+
+**Flow**:
+1. Generate `code_verifier` + `code_challenge` (S256)
+2. Spin up temporary localhost HTTP server (random port) for callback
+3. Open browser to authorization endpoint
+4. Receive authorization code via localhost callback
+5. Exchange code for tokens (access, refresh, id_token)
+6. Store tokens in VS Code SecretStorage (encrypted)
+7. Auto-refresh tokens 5 minutes before expiry
+
+**Configuration** (env-overridable):
+- `MOVESIA_AUTH_URL` → Auth server base URL (default: `http://localhost:3000`)
+- `MOVESIA_OAUTH_CLIENT_ID` → OAuth client ID (default: `movesia-vscode-b66e5c16`)
+- Scopes: `openid profile email offline_access`
+
+**IDE-agnostic**: Uses localhost callback instead of custom URI schemes (`vscode://`), so it works on any VS Code fork (Cursor, Windsurf, etc.).
+
+**Extension commands**: `movesia.signIn` opens the OAuth flow in browser; `movesia.signOut` clears tokens.
+
+**Auth gate**: `agent-service.ts` checks `authService.isAuthenticated()` before allowing chat — unauthenticated users get an error message.
+
+**Webview hooks**: `useAuthState` hook listens for `authStateChanged` postMessage events from the extension host.
 
 ### Unity Connection (Connect-All Architecture)
 
@@ -117,14 +152,17 @@ Registration happens in `registerCustomToolUIs.ts`. Built-in UIs: `UnityQueryUI`
 
 ## Key Patterns
 
+- **OAuth 2.1 PKCE**: Localhost callback + SecretStorage. IDE-agnostic (no custom URI schemes)
+- **Auth-gated routes**: `AuthGate` + `RequireAuth` wrappers protect all routes except `/signIn`
 - **Singleton webviews**: One panel instance per route via static `instances` map
 - **Connect-all WebSockets**: Accept all Unity connections, route to target project only
 - **Lazy WebSocket server**: Starts when project is selected, not at activation
 - **Interrupt/checkpoint**: Agent pauses for async Unity ops (compilation), resumes with result
-- **VS Code theme integration**: Tailwind classes map to CSS variables (`bg-vscode-editor-background`)
-- **Onboarding flow**: Project selection → Package installation → Chat (route-based navigation)
+- **VS Code theme integration**: Tailwind v4 `@theme` block in `vscode.css` maps CSS variables (`bg-vscode-editor-background`)
+- **Onboarding flow**: Sign-in → Project selection → Package installation → Chat (route-based navigation)
 - **Zod pinned**: `zod` version is pinned to `3.25.67` with overrides for LangChain compatibility
 - **Shared db instance**: Single sql.js database shared between checkpointer and conversations
+- **Tailwind v4**: `@tailwindcss/vite` plugin, `tw-animate-css`, no PostCSS config. Theme defined in CSS `@theme` block
 
 ## Common Tasks
 
@@ -161,10 +199,14 @@ Key packages:
 - `react` v19.2.4 — Webview UI
 - `ws` v8.18.0 — WebSocket server
 - `zod` v3.25.67 — Schema validation (pinned for LangChain compatibility)
+- `tailwindcss` v4.1.18 + `@tailwindcss/vite` — CSS framework (v4, no PostCSS)
+- `tw-animate-css` — Animation utilities (replaces `tailwindcss-animate`)
 
 ## Troubleshooting
 
 - **Agent not responding**: Check "Movesia Agent" output panel. Verify API key in `agent-service.ts` is valid.
+- **Auth issues**: Tokens stored in VS Code SecretStorage. Run `movesia.signOut` then `movesia.signIn` to reset. Check `MOVESIA_AUTH_URL` env var if using non-default auth server.
+- **AuthGate redirect loop**: Check `useAuthState` hook and `authStateChanged` message flow between extension host and webview.
 - **Unity tools failing**: Unity Editor must be running with Movesia package installed. Status indicator should be green.
 - **Database errors**: Delete the db file in VS Code's globalStorage to reset (loses conversations). Find path via `context.globalStorageUri.fsPath`.
 - **Build errors**: Clean with `rm -rf out/ && npm run compile`. Reinstall with `rm -rf node_modules && npm install`.
