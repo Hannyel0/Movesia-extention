@@ -22,6 +22,11 @@ export interface UnityResponse {
 export interface UnityManager {
     isConnected: boolean;
     sendAndWait(action: string, params: Record<string, unknown>, timeout?: number): Promise<Record<string, unknown>>;
+    /**
+     * Send a refresh/compilation command and wait for compilation_complete response.
+     * Unlike sendAndWait, this is NOT cancelled during compilation and has a longer timeout (120s).
+     */
+    sendRefreshAndWait(action: string, params: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
 /**

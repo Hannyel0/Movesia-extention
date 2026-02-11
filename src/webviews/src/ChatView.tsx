@@ -442,6 +442,7 @@ function ChatView() {
         value={inputValue}
         onChange={setInputValue}
         onSend={handleSendMessage}
+        onStop={handleStop}
         isLoading={isLoading}
       />
     </div>

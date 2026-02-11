@@ -3,13 +3,17 @@
  * "I need to compile my code."
  * Consumes: refresh_assets
  *
- * Note: This tool uses LangGraph's interrupt() to pause execution while Unity compiles.
- * The interrupt is handled by the agent harness which communicates with Unity via WebSocket.
+ * This tool sends a refresh_assets command to Unity via WebSocket and waits
+ * for a compilation_complete response. Unity's CompilationManager handles the
+ * async compilation flow (including domain reloads) and sends back the result.
+ *
+ * The tool uses a dedicated "compilation wait" mechanism on the UnityManager
+ * that is NOT cancelled when compilation starts (unlike regular commands).
  */
 
 import { z } from 'zod';
 import { DynamicStructuredTool } from '@langchain/core/tools';
-import { interrupt } from '@langchain/langgraph';
+import { getUnityManager } from './connection';
 
 /**
  * Zod schema for unity_refresh tool input
@@ -49,16 +53,25 @@ interface CompilationTimeoutResponse {
     common_causes: string[];
 }
 
-/** Unity response body structure */
-interface UnityCompileBody {
-    compilationErrors?: string[];
-    watchedScriptsStatus?: Record<string, boolean>;
+/** Response structure for not connected */
+interface NotConnectedResponse {
+    status: 'NOT_CONNECTED';
+    message: string;
+    hint: string;
 }
 
-/** Unity response structure */
-interface UnityResponse {
-    success: boolean;
-    body?: UnityCompileBody;
+/** Unity compilation_complete body structure */
+interface CompilationCompleteBody {
+    success?: boolean;
+    recompiled?: boolean;
+    hasErrors?: boolean;
+    errors?: string[];
+    availableTypes?: string[];
+    watchedScripts?: {
+        found?: string[];
+        missing?: string[];
+    };
+    message?: string;
     error?: string;
 }
 
@@ -73,54 +86,82 @@ async function unityRefreshImpl(input: RefreshInput, _config?: any): Promise<str
     const { watched_scripts, type_limit = 20 } = input;
 
     // ---------------------------------------------------------
-    // BUILD THE REQUEST (will be sent to Unity by harness)
+    // CHECK CONNECTION
+    // ---------------------------------------------------------
+    const manager = getUnityManager();
+    if (!manager) {
+        const response: NotConnectedResponse = {
+            status: 'NOT_CONNECTED',
+            message: 'Unity manager not initialized.',
+            hint: 'Make sure the extension is fully initialized and a project is selected.'
+        };
+        return JSON.stringify(response, null, 2);
+    }
+
+    if (!manager.isConnected) {
+        const response: NotConnectedResponse = {
+            status: 'NOT_CONNECTED',
+            message: 'Unity is not connected.',
+            hint: 'Ensure Unity Editor is running with the Movesia package installed and the WebSocket connection is established.'
+        };
+        return JSON.stringify(response, null, 2);
+    }
+
+    // ---------------------------------------------------------
+    // BUILD THE REQUEST
     // ---------------------------------------------------------
     const params: Record<string, unknown> = { typeLimit: type_limit };
     if (watched_scripts) {
         params.watchedScripts = watched_scripts;
     }
 
-    const compileRequest = {
-        action: 'refresh_assets',
-        params
-    };
+    // ---------------------------------------------------------
+    // SEND & WAIT (compilation-safe, long timeout)
+    // ---------------------------------------------------------
+    // Uses sendRefreshAndWait which is NOT cancelled during compilation
+    // and has a longer timeout (120s) to survive domain reloads.
+    let result: Record<string, unknown>;
+    try {
+        result = await manager.sendRefreshAndWait('refresh_assets', params);
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
 
-    // ---------------------------------------------------------
-    // INTERRUPT: Pause agent, let harness call Unity via WebSocket
-    // ---------------------------------------------------------
-    // The harness catches this, sends command to Unity via WebSocket,
-    // waits for compilation to complete, then resumes with Unity's response
-    console.log(`DEBUG: Pausing for compilation... request=${JSON.stringify(compileRequest)}`);
-    const result = interrupt(compileRequest) as UnityResponse;
-    console.log(`DEBUG: Resumed from compilation. result=${JSON.stringify(result)}`);
+        // Handle timeout
+        if (errorMessage.toLowerCase().includes('timeout')) {
+            const timeoutResponse: CompilationTimeoutResponse = {
+                status: 'TIMEOUT',
+                message: 'Compilation timed out after 120 seconds. This usually means Unity encountered an issue during domain reload.',
+                action_required: "Use unity_query with action: 'get_logs' to check Unity's console for errors or warnings.",
+                common_causes: [
+                    'Syntax error preventing compilation',
+                    'Unity Editor dialog popup blocking (API Updater, etc.)',
+                    'Script with infinite loop in static constructor',
+                    'Missing assembly reference'
+                ]
+            };
+            return JSON.stringify(timeoutResponse, null, 2);
+        }
 
-    // ---------------------------------------------------------
-    // HANDLE TIMEOUT - Tell agent to check logs
-    // ---------------------------------------------------------
-    if (!result.success && result.error?.toLowerCase().includes('timeout')) {
-        const timeoutResponse: CompilationTimeoutResponse = {
-            status: 'TIMEOUT',
-            message: 'Compilation timed out after 40 seconds. This usually means Unity encountered an issue during domain reload.',
-            action_required: "Use unity_query with action: 'get_logs' to check Unity's console for errors or warnings.",
-            common_causes: [
-                'Syntax error preventing compilation',
-                'Unity Editor dialog popup blocking (API Updater, etc.)',
-                'Script with infinite loop in static constructor',
-                'Missing assembly reference'
-            ]
+        // Other errors
+        const failedResponse: CompilationFailedResponse = {
+            status: 'COMPILATION_FAILED',
+            message: `Failed to refresh assets: ${errorMessage}`,
+            errors: [errorMessage]
         };
-        return JSON.stringify(timeoutResponse, null, 2);
+        return JSON.stringify(failedResponse, null, 2);
     }
 
     // ---------------------------------------------------------
     // SMART RESPONSE PARSING
     // ---------------------------------------------------------
-    const body = result.body ?? {};
-    const success = result.success;
+    // The response comes from CompilationManager.cs as compilation_complete
+    // Body shape: { success, recompiled, hasErrors, errors, availableTypes, watchedScripts: { found, missing } }
+    const body = result as CompilationCompleteBody;
+    const success = body.success !== false; // Default to true if not explicitly false
 
     // Case 1: Compilation Failed
-    if (!success || body.compilationErrors) {
-        const errors = body.compilationErrors ?? [];
+    if (!success || body.hasErrors) {
+        const errors = body.errors ?? [];
         const failedResponse: CompilationFailedResponse = {
             status: 'COMPILATION_FAILED',
             message: 'Unity failed to compile the scripts. You must fix these errors:',
@@ -132,21 +173,29 @@ async function unityRefreshImpl(input: RefreshInput, _config?: any): Promise<str
     // Case 2: Success
     const response: CompilationSuccessResponse = {
         status: 'SUCCESS',
-        message: 'Assets refreshed and scripts compiled.'
+        message: body.recompiled
+            ? 'Assets refreshed and scripts compiled successfully.'
+            : 'Assets refreshed. No script changes detected (no recompilation needed).'
     };
 
     // Did we find the scripts the agent cared about?
-    if (watched_scripts && body.watchedScriptsStatus) {
-        response.verification = body.watchedScriptsStatus;
+    if (watched_scripts && body.watchedScripts) {
+        const missingScripts = body.watchedScripts.missing ?? [];
+        const foundScripts = body.watchedScripts.found ?? [];
 
-        // Helper text for the LLM
-        const missing = Object.entries(body.watchedScriptsStatus)
-            .filter(([_, found]) => !found)
-            .map(([name]) => name);
+        // Build verification map
+        const verification: Record<string, boolean> = {};
+        for (const name of foundScripts) {
+            verification[name] = true;
+        }
+        for (const name of missingScripts) {
+            verification[name] = false;
+        }
+        response.verification = verification;
 
-        if (missing.length > 0) {
-            response.warning = `Compilation passed, but these types are still missing: ${JSON.stringify(missing)}. Did you get the class name right inside the file?`;
-        } else {
+        if (missingScripts.length > 0) {
+            response.warning = `Compilation passed, but these types are still missing: ${JSON.stringify(missingScripts)}. Did you get the class name right inside the file?`;
+        } else if (foundScripts.length > 0) {
             response.next_step = "You can now use unity_component({ action: 'add' }) with these scripts.";
         }
     }
@@ -158,8 +207,8 @@ async function unityRefreshImpl(input: RefreshInput, _config?: any): Promise<str
  * The Compiler - unity_refresh tool
  * Trigger Unity Asset Database refresh and Script Compilation.
  *
- * Note: This tool is synchronous because interrupt() is synchronous.
- * The async behavior is handled by the LangGraph runtime.
+ * Sends refresh_assets to Unity and waits for compilation_complete response.
+ * Uses a compilation-safe wait mechanism that survives domain reloads.
  */
 export const unityRefresh = new DynamicStructuredTool({
     name: 'unity_refresh',
@@ -169,8 +218,8 @@ CRITICAL: You MUST use this tool after creating or editing C# scripts (.cs files
 Unity cannot add a component until the script is compiled.
 
 Behavior:
-1. Pauses agent execution while Unity compiles (handled by orchestrator).
-2. Returns 'compilationErrors' if syntax errors exist.
+1. Sends refresh command to Unity and waits for compilation to finish.
+2. Returns 'COMPILATION_FAILED' with errors if syntax errors exist.
 3. Confirms if 'watched_scripts' are now valid components.`,
     schema: RefreshSchema,
     func: unityRefreshImpl

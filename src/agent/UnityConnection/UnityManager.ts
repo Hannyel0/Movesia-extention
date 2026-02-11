@@ -106,6 +106,13 @@ export class UnityManager {
         reject: (reason: Error) => void;
     }> = new Map();
 
+    // Pending refresh/compilation commands — NOT cancelled during compilation
+    // These survive domain reloads because Unity sends compilation_complete after reconnecting
+    private _pendingRefreshCommands: Map<string, {
+        resolve: (value: Record<string, unknown>) => void;
+        reject: (reason: Error) => void;
+    }> = new Map();
+
     constructor(options: {
         interruptManager?: InterruptManager;
         config?: Partial<UnityManagerConfig>;
@@ -302,6 +309,70 @@ export class UnityManager {
     }
 
     /**
+     * Send a refresh/compilation command and wait for response.
+     *
+     * Unlike sendAndWait, this method:
+     * - Uses a longer timeout (interruptTimeout, default 120s)
+     * - Is NOT cancelled when compilation starts (_onCompilationStarted)
+     * - Matches compilation_complete responses that arrive after domain reload/reconnect
+     *
+     * Flow:
+     * 1. Sends refresh_assets command to Unity
+     * 2. Unity triggers AssetDatabase.Refresh() and may start compilation
+     * 3. If compilation happens, Unity domain reloads (WebSocket drops)
+     * 4. After reload, Unity reconnects and sends compilation_complete with original msg ID
+     * 5. This method resolves with the compilation result
+     *
+     * @param commandType - Type of command (e.g., "refresh_assets")
+     * @param params - Command parameters
+     * @returns Response body from Unity (compilation_complete body)
+     * @throws Error if no Unity connection for target project
+     * @throws Error if response times out
+     */
+    async sendRefreshAndWait(
+        commandType: string,
+        params: Record<string, unknown> = {}
+    ): Promise<Record<string, unknown>> {
+        const activeSession = await this._getActiveSession();
+        if (!activeSession) {
+            throw new Error('No Unity connection available for target project');
+        }
+
+        const { websocket: ws, connection, sessionId } = activeSession;
+        const timeoutMs = this.config.interruptTimeout * 1000; // 120s default
+
+        // Create and send command
+        const msg = MovesiaMessage.create(
+            commandType,
+            params,
+            ConnectionSource.VSCODE,
+            sessionId
+        );
+
+        // Register in the compilation-safe pending map (NOT in _pendingCommands)
+        const responsePromise = new Promise<Record<string, unknown>>((resolve, reject) => {
+            this._pendingRefreshCommands.set(msg.id, { resolve, reject });
+        });
+
+        // Set up timeout
+        const timeoutId = setTimeout(() => {
+            const pending = this._pendingRefreshCommands.get(msg.id);
+            if (pending) {
+                this._pendingRefreshCommands.delete(msg.id);
+                pending.reject(new Error(`Refresh command ${commandType} timed out after ${timeoutMs}ms`));
+            }
+        }, timeoutMs);
+
+        try {
+            await sendToClient(ws, msg.toDict());
+            return await responsePromise;
+        } finally {
+            clearTimeout(timeoutId);
+            this._pendingRefreshCommands.delete(msg.id);
+        }
+    }
+
+    /**
      * Check if Unity is currently connected (for the target project).
      */
     get isConnected(): boolean {
@@ -347,6 +418,12 @@ export class UnityManager {
     async closeAll(): Promise<void> {
         this._heartbeat.stop();
         this._commandRouter.cancelAll();
+
+        // Cancel all pending refresh commands (server is shutting down)
+        for (const [_requestId, pending] of this._pendingRefreshCommands) {
+            pending.reject(new Error('All connections closed'));
+        }
+        this._pendingRefreshCommands.clear();
 
         const sessions = await this._sessions.getAllSessions();
         for (const [_sessionId, entry] of sessions) {
@@ -487,7 +564,16 @@ export class UnityManager {
             return;
         }
 
-        // Check if this is a response to a pending command (matched by message ID)
+        // Check if this is a response to a pending refresh/compilation command FIRST
+        // compilation_complete messages carry the original request's msg.id
+        const pendingRefresh = this._pendingRefreshCommands.get(msg.id);
+        if (pendingRefresh) {
+            this._pendingRefreshCommands.delete(msg.id);
+            pendingRefresh.resolve(msg.body);
+            return;
+        }
+
+        // Check if this is a response to a pending regular command (matched by message ID)
         // Unity echoes back the original message ID in its response
         const pending = this._pendingCommands.get(msg.id);
         if (pending) {
@@ -512,8 +598,10 @@ export class UnityManager {
         // Clear from sessions
         await this._sessions.clearIfMatch(sessionId, websocket);
 
-        // Cancel pending commands only if this was the target project
+        // Cancel regular pending commands only if this was the target project
+        // NOTE: Do NOT cancel _pendingRefreshCommands — Unity will reconnect after domain reload
         if (wasTargetProject) {
+            const regularCount = this._pendingCommands.size;
             for (const [_requestId, pending] of this._pendingCommands) {
                 pending.reject(new Error('Connection closed'));
             }
@@ -550,7 +638,8 @@ export class UnityManager {
     private async _onCompilationStarted(cid: string): Promise<void> {
         logger.info(`Unity compilation started [${cid}]`);
 
-        // Cancel pending commands (they'll fail anyway)
+        // Cancel regular pending commands (they'll fail during domain reload)
+        // NOTE: Do NOT cancel _pendingRefreshCommands — those survive compilation
         for (const [_requestId, pending] of this._pendingCommands) {
             pending.reject(new Error('Compilation started'));
         }

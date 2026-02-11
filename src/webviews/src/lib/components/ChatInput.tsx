@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react'
-import { ArrowUp, Loader2, Plus, Code, MessageCircle, ClipboardList, Check, ChevronDown } from 'lucide-react'
+import { ArrowUp, Square, Plus, Code, MessageCircle, ClipboardList, Check, ChevronDown } from 'lucide-react'
 import { cn } from '../utils'
 
 export type ChatMode = 'code' | 'chat' | 'plan'
@@ -26,6 +26,7 @@ interface ChatInputProps {
   value: string
   onChange: (value: string) => void
   onSend: () => void
+  onStop?: () => void
   isLoading: boolean
   placeholder?: string
   mode?: ChatMode
@@ -36,6 +37,7 @@ export function ChatInput({
   value,
   onChange,
   onSend,
+  onStop,
   isLoading,
   placeholder = "Ask anything",
   mode: controlledMode,
@@ -172,23 +174,30 @@ export function ChatInput({
             </div>
           </div>
 
-          {/* Right: Send button */}
-          <button
-            onClick={onSend}
-            disabled={!value.trim() || isLoading}
-            className={cn(
-              'flex items-center justify-center w-7 h-7 rounded-lg transition-colors',
-              value.trim() && !isLoading
-                ? 'bg-vscode-foreground text-vscode-editor-background'
-                : 'bg-vscode-descriptionForeground/20 text-vscode-descriptionForeground/50'
-            )}
-          >
-            {isLoading ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
+          {/* Right: Send / Stop button */}
+          {isLoading ? (
+            <button
+              onClick={onStop}
+              className="flex items-center justify-center w-7 h-7 rounded-lg transition-colors bg-vscode-foreground text-vscode-editor-background"
+              title="Stop generating"
+            >
+              <Square className="w-3 h-3" fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              onClick={onSend}
+              disabled={!value.trim()}
+              className={cn(
+                'flex items-center justify-center w-7 h-7 rounded-lg transition-colors',
+                value.trim()
+                  ? 'bg-vscode-foreground text-vscode-editor-background'
+                  : 'bg-vscode-descriptionForeground/20 text-vscode-descriptionForeground/50'
+              )}
+              title="Send message"
+            >
               <ArrowUp className="w-3.5 h-3.5" strokeWidth={2.5} />
-            )}
-          </button>
+            </button>
+          )}
         </div>
       </div>
     </div>
