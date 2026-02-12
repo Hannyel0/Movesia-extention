@@ -370,7 +370,7 @@ function ChatView() {
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4" ref={scrollRef}>
-        <div className="space-y-4">
+        <div className="max-w-3xl mx-auto space-y-4">
           {displayMessages.length === 0 ? (
             <EmptyState onSuggestionClick={handleSuggestionClick} />
           ) : (
@@ -450,7 +450,7 @@ const ChatMessage = memo(function ChatMessage({ message }: ChatMessageProps) {
   return (
     <div className={cn('py-2', isUser && 'text-right')}>
       {isUser ? (
-        <div className="inline-block px-4 py-2 rounded-2xl bg-vscode-input-background text-vscode-input-foreground border border-vscode-input-border/50 max-w-[80%] text-left">
+        <div className="inline-block px-4 py-2 rounded-2xl bg-vscode-input-background text-vscode-input-foreground border border-vscode-input-border/20 max-w-[80%] text-left">
           <p className="text-sm whitespace-pre-wrap">{message.content}</p>
         </div>
       ) : (

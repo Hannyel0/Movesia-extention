@@ -86,7 +86,7 @@ export function ChatInput({
     <div className="px-4 pb-4 pt-2">
       <div
         className={cn(
-          'relative flex flex-col rounded-xl bg-vscode-input-background overflow-visible transition-all',
+          'relative flex flex-col rounded-xl bg-vscode-input-background overflow-visible transition-all max-w-3xl mx-auto',
           'shadow-sm',
           focused
             ? 'border border-vscode-input-border/60 shadow-md'
