@@ -14,6 +14,7 @@ public static class WebSocketClient
     // --- Connection State ---
     private static WebSocket ws;
     private static volatile bool isConnecting;
+    private static volatile bool needsInitialConnect = true;
     private static int reconnectingFlag = 0;
     private static CancellationTokenSource cts;
     private static readonly System.Random rng = new System.Random();
@@ -68,15 +69,9 @@ public static class WebSocketClient
         AssemblyReloadEvents.beforeAssemblyReload += () => _ = CloseSocket("domain-reload");
         EditorApplication.quitting += () => _ = CloseSocket("editor-quit");
 
-        // Don't connect immediately - use delayCall to let domain reload settle
-        EditorApplication.delayCall += () =>
-        {
-            if (!IsConnected && !isConnecting)
-            {
-                CreateWebSocket();
-                _ = ConnectWithRetry();
-            }
-        };
+        // Initial connection is triggered via needsInitialConnect flag in OnEditorUpdate.
+        // We use update instead of delayCall because delayCall only fires when Unity has focus,
+        // which causes a 10-20s delay if the user is in another window during domain reload.
     }
 
     // --- WebSocket Setup ---
@@ -253,6 +248,18 @@ public static class WebSocketClient
     // --- Editor Update Loop ---
     private static void OnEditorUpdate()
     {
+        // One-shot: kick off initial connection on the first update tick after domain reload.
+        // This runs even without focus, unlike EditorApplication.delayCall.
+        if (needsInitialConnect)
+        {
+            needsInitialConnect = false;
+            if (!IsConnected && !isConnecting)
+            {
+                CreateWebSocket();
+                _ = ConnectWithRetry();
+            }
+        }
+
         ws?.DispatchMessageQueue();
 
         // Process incoming messages on the main thread

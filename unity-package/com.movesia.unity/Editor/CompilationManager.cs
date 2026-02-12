@@ -8,6 +8,7 @@ using UnityEditor;
 using UnityEditor.Compilation;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 /// <summary>
@@ -29,7 +30,7 @@ public static class CompilationManager
         Path.Combine(Application.dataPath, "../Temp/movesia_pending_compilation.json");
     
     // --- Retry Configuration ---
-    private const int MAX_RECONNECT_ATTEMPTS = 50;      // ~10 seconds max wait
+    private const int MAX_RECONNECT_ATTEMPTS = 150;      // ~10 seconds max wait
     private const int RECONNECT_INTERVAL_MS = 200;
     
     // --- Pending Request Data ---
@@ -318,19 +319,25 @@ public static class CompilationManager
     
     private static async Task<bool> WaitForWebSocketConnection()
     {
-        for (int attempt = 0; attempt < MAX_RECONNECT_ATTEMPTS; attempt++)
+        // Use Task.Run to escape Unity's sync context
+        // This allows Task.Delay to use real OS timers instead of Unity's update loop
+        // Result: Works even when Unity doesn't have focus
+        return await Task.Run(async () =>
         {
-            if (WebSocketClient.IsConnected)
+            for (int attempt = 0; attempt < MAX_RECONNECT_ATTEMPTS; attempt++)
             {
-                Debug.Log($"✅ WebSocket reconnected after {attempt * RECONNECT_INTERVAL_MS}ms");
-                return true;
+                if (WebSocketClient.IsConnected)
+                {
+                    Debug.Log($"✅ WebSocket reconnected after {attempt * RECONNECT_INTERVAL_MS}ms");
+                    return true;
+                }
+
+                await Task.Delay(RECONNECT_INTERVAL_MS);
             }
-            
-            await Task.Delay(RECONNECT_INTERVAL_MS);
-        }
-        
-        Debug.LogWarning($"⏱️ WebSocket reconnection timeout after {MAX_RECONNECT_ATTEMPTS * RECONNECT_INTERVAL_MS}ms");
-        return false;
+
+            Debug.LogWarning($"⏱️ WebSocket reconnection timeout after {MAX_RECONNECT_ATTEMPTS * RECONNECT_INTERVAL_MS}ms");
+            return false;
+        });
     }
     
     private static object BuildCompilationResult(PendingCompilationRequest pending)
