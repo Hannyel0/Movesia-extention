@@ -11,8 +11,16 @@
 import * as vscode from 'vscode'
 import { WebSocketServer, WebSocket } from 'ws'
 import { randomUUID } from 'crypto'
-import { resolve } from 'path'
+import { resolve, join } from 'path'
 import { URL } from 'url'
+import * as dotenv from 'dotenv'
+
+// Load .env from extension root (where package.json lives)
+const _dotenvPath = join(__dirname, '..', '..', '.env')
+const _dotenvResult = dotenv.config({ path: _dotenvPath })
+console.log(
+  `[Movesia] dotenv loaded from: ${_dotenvPath} — ${_dotenvResult.error ? `ERROR: ${_dotenvResult.error.message}` : `OK (${Object.keys(_dotenvResult.parsed ?? {}).length} vars)`}`
+)
 
 // Agent imports - these will be compiled alongside the extension
 import { createMovesiaAgent, type MovesiaAgent } from '../agent/agent'
@@ -37,20 +45,28 @@ const logger = createLogger('movesia.agent')
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// API Keys - Hardcoded for SaaS product
+// API Keys - Loaded from .env file
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * OpenRouter API key for LLM access.
- * This is a SaaS product - the key is provided by Movesia.
+ * All API keys are read from the .env file at the extension root.
+ * See .env for the full list of supported environment variables.
+ *
+ * Required:
+ *   OPENROUTER_API_KEY  - OpenRouter API key for LLM access
+ *
+ * Optional:
+ *   TAVILY_API_KEY      - Tavily API key for internet search
+ *   LANGSMITH_API_KEY   - LangSmith tracing API key
+ *   LANGSMITH_ENDPOINT  - LangSmith endpoint (default: https://api.smith.langchain.com)
+ *   LANGSMITH_PROJECT   - LangSmith project name
  */
-const OPENROUTER_API_KEY =
-  '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' // TODO: Replace with actual key
-
-/**
- * Tavily API key for internet search (optional).
- */
-const TAVILY_API_KEY = '' // TODO: Add if needed
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ?? ''
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY ?? ''
+const LANGSMITH_API_KEY = process.env.LANGSMITH_API_KEY ?? ''
+const LANGSMITH_ENDPOINT =
+  process.env.LANGSMITH_ENDPOINT ?? 'https://api.smith.langchain.com'
+const LANGSMITH_PROJECT = process.env.LANGSMITH_PROJECT ?? ''
 
 export interface AgentServiceConfig {
   context: vscode.ExtensionContext
@@ -335,6 +351,21 @@ export class AgentService {
       this.log('Tavily API key: configured')
     } else {
       this.log('Tavily API key: not configured (internet search disabled)')
+    }
+
+    // LangSmith tracing — set env vars before agent creation
+    if (LANGSMITH_API_KEY) {
+      process.env.LANGSMITH_TRACING = 'true'
+      process.env.LANGSMITH_API_KEY = LANGSMITH_API_KEY
+      process.env.LANGSMITH_ENDPOINT = LANGSMITH_ENDPOINT
+      process.env.LANGSMITH_PROJECT = LANGSMITH_PROJECT
+      this.log(`LangSmith tracing: enabled`)
+      this.log(`  LANGSMITH_API_KEY: ${LANGSMITH_API_KEY.slice(0, 12)}...`)
+      this.log(`  LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT}`)
+      this.log(`  LANGSMITH_PROJECT: ${LANGSMITH_PROJECT}`)
+      this.log(`  LANGSMITH_TRACING: ${process.env.LANGSMITH_TRACING}`)
+    } else {
+      this.log('LangSmith tracing: not configured (LANGSMITH_API_KEY is empty)')
     }
 
     // Only set project path env var if we have one
