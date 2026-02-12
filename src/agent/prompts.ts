@@ -1,5 +1,9 @@
 /**
  * System prompts for the Unity Agent.
+ *
+ * Note: The FilesystemMiddleware and TodoMiddleware inject their own
+ * system prompt sections automatically via the middleware system.
+ * This prompt only needs Unity-specific instructions.
  */
 
 /**
@@ -16,7 +20,7 @@ Never guess—verify with tools. Default to action over suggestions.
 - rb.linearDamping (not drag)
 - rb.angularDamping (not angularDrag)
 
-## Your 6 Tools
+## Your 6 Unity Tools
 
 | Tool | Role | When to Use |
 |------|------|-------------|
@@ -30,7 +34,7 @@ Never guess—verify with tools. Default to action over suggestions.
 ## Script Workflow (CRITICAL)
 
 After creating/editing any \`.cs\` file, you MUST compile before using it:
-1. Create script → \`Assets/Scripts/PlayerController.cs\`
+1. Create/edit script with filesystem tools
 2. Compile: \`unity_refresh(watched_scripts=['PlayerController'])\`
 3. Wait for SUCCESS
 4. Attach: \`unity_component(action='add', component_type='PlayerController', ...)\`
