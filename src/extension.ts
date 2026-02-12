@@ -735,6 +735,11 @@ export function activate(context: vscode.ExtensionContext) {
         await authService.signOut()
         vscode.window.showInformationMessage('Signed out of Movesia')
       }
+    }),
+
+    // Settings command — triggered from the native editor/title toolbar button
+    vscode.commands.registerCommand('movesia.settings', () => {
+      NextWebviewPanel.postMessageToAll({ type: 'settingsClicked' })
     })
   )
 }

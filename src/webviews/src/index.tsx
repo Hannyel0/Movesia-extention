@@ -5,6 +5,7 @@ import View2 from './View2'
 import ProjectSelector from './ProjectSelector'
 import InstallPackage from './InstallPackage'
 import SignIn from './SignIn'
+import SettingsView from './SettingsView'
 import './lib/vscode.css'
 import { MemoryRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useAuthState } from './lib/hooks/useAuthState'
@@ -117,6 +118,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <View2 />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <RequireAuth>
+            <SettingsView />
           </RequireAuth>
         }
       />

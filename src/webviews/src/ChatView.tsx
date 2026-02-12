@@ -1,21 +1,12 @@
 import React, { useRef, useEffect, useState, memo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, Sparkles, Settings, StopCircle, FolderSync, LogOut, User } from 'lucide-react'
+import { Loader2, Sparkles, StopCircle, FolderSync } from 'lucide-react'
 import { Button } from './lib/components/ui/button'
 import { cn } from './lib/utils'
 import { MarkdownRenderer } from './lib/components/MarkdownRenderer'
 import { ChatInput } from './lib/components/ChatInput'
 import { ThreadSelector } from './lib/components/ThreadSelector'
 import { UnityStatusIndicator } from './lib/components/UnityStatusIndicator'
-import { Avatar, AvatarImage, AvatarFallback } from './lib/components/ui/avatar'
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-} from './lib/components/ui/dropdown-menu'
 import {
   ToolCallList,
   ToolUIWrapper,
@@ -31,7 +22,6 @@ import { useToolCalls } from './lib/hooks/useToolCalls'
 import { useThreads } from './lib/hooks/useThreads'
 import { useSelectedProject } from './lib/hooks/useSelectedProject'
 import { useProjectMessages } from './lib/hooks/useProjectMessages'
-import { useAuthState } from './lib/hooks/useAuthState'
 import VSCodeAPI from './lib/VSCodeAPI'
 import { generateMessageSegments } from './lib/utils/messageSegments'
 import type { DisplayMessage, MessageSegment } from './lib/types/chat'
@@ -59,7 +49,7 @@ function ChatView() {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Auth state for user info & sign-out
-  const { authState, signOut } = useAuthState()
+
 
   // Track if we've done the initial check
   const hasCheckedRef = useRef(false)
@@ -300,6 +290,17 @@ function ChatView() {
     clearToolCalls()
   }, [setMessages, setThreadId, threadsSetThreadId, clearToolCalls])
 
+  // Listen for native title-bar settings button clicks from the extension host
+  useEffect(() => {
+    const handleSettingsMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'settingsClicked') {
+        navigate('/settings')
+      }
+    }
+    window.addEventListener('message', handleSettingsMessage)
+    return () => window.removeEventListener('message', handleSettingsMessage)
+  }, [navigate])
+
   const handleStop = useCallback(() => {
     log('Stop', 'Stopping generation')
     stop()
@@ -349,7 +350,7 @@ function ChatView() {
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-[var(--vscode-sideBar-background)] text-foreground">
       {/* Header */}
-      <header className="flex items-center justify-between px-3 py-2 border-b border-border">
+      <header className="flex items-center justify-between px-3 py-2">
         <div className="flex items-center gap-1">
           <UnityStatusIndicator />
           <ThreadSelector
@@ -364,42 +365,6 @@ function ChatView() {
           <Button variant="ghost" size="icon" onClick={handleChangeProject} title="Change Project">
             <FolderSync className="w-4 h-4" />
           </Button>
-          <Button variant="ghost" size="icon" onClick={clearChat} title="Settings">
-            <Settings className="w-4 h-4" />
-          </Button>
-
-          {/* User avatar with sign-out dropdown */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="rounded-full" title={authState.user?.name || 'Account'}>
-                <Avatar className="h-6 w-6">
-                  {authState.user?.picture && (
-                    <AvatarImage src={authState.user.picture} alt={authState.user.name || 'User'} />
-                  )}
-                  <AvatarFallback className="text-[10px] bg-primary/20 text-primary">
-                    {authState.user?.name
-                      ? authState.user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
-                      : <User className="w-3 h-3" />}
-                  </AvatarFallback>
-                </Avatar>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel className="font-normal">
-                <div className="flex flex-col space-y-1">
-                  <p className="text-sm font-medium leading-none">{authState.user?.name || 'User'}</p>
-                  {authState.user?.email && (
-                    <p className="text-xs leading-none text-muted-foreground">{authState.user.email}</p>
-                  )}
-                </div>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={signOut} className="text-destructive focus:text-destructive cursor-pointer">
-                <LogOut className="w-4 h-4 mr-2" />
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         </div>
       </header>
 

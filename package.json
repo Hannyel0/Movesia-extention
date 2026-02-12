@@ -122,7 +122,25 @@
         "command": "movesia.signOut",
         "title": "Sign Out",
         "category": "Movesia"
+      },
+      {
+        "command": "movesia.settings",
+        "title": "Settings",
+        "category": "Movesia",
+        "icon": {
+          "light": "resources/icons/settings-light.svg",
+          "dark": "resources/icons/settings-dark.svg"
+        }
       }
-    ]
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "movesia.settings",
+          "group": "navigation",
+          "when": "activeWebviewPanelId == 'chatView' || activeWebviewPanelId == 'signIn' || activeWebviewPanelId == 'installPackage' || activeWebviewPanelId == 'projectSelector' || activeWebviewPanelId == 'settings'"
+        }
+      ]
+    }
   }
 }
