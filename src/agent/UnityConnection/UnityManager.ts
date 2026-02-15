@@ -213,8 +213,12 @@ export class UnityManager {
 
         // Only notify "connected" if this connection matches the target project
         const isTargetProject = this._isTargetProject(projectPath);
+        logger.info(`🔍 [DEBUG] handleConnection: projectPath="${projectPath}", targetProjectPath="${this._targetProjectPath || 'NOT SET'}", isTargetProject=${isTargetProject}`);
         if (isTargetProject) {
+            logger.info(`🔍 [DEBUG] ✅ This connection matches target project — notifying connected`);
             await this._notifyConnectionChange(true);
+        } else {
+            logger.info(`🔍 [DEBUG] ⚠️ This connection does NOT match target project (idle connection)`);
         }
 
         // Send welcome message
@@ -265,10 +269,13 @@ export class UnityManager {
         params: Record<string, unknown> = {},
         timeout?: number
     ): Promise<Record<string, unknown>> {
+        logger.info(`🔍 [DEBUG] sendAndWait("${commandType}") — targetProjectPath="${this._targetProjectPath || 'NOT SET'}", sessionCount=${this._sessions.size}`);
         const activeSession = await this._getActiveSession();
         if (!activeSession) {
+            logger.error(`🔍 [DEBUG] ❌ sendAndWait FAILED: No active session found for targetProjectPath="${this._targetProjectPath}"`);
             throw new Error('No Unity connection available for target project');
         }
+        logger.info(`🔍 [DEBUG] sendAndWait: found active session for project="${activeSession.connection.projectPath}"`)
 
         const { websocket: ws, connection, sessionId } = activeSession;
         const timeoutMs = (timeout ?? this.config.commandTimeout) * 1000;
@@ -377,10 +384,12 @@ export class UnityManager {
      */
     get isConnected(): boolean {
         if (!this._targetProjectPath) {
+            logger.info(`🔍 [DEBUG] isConnected: false (no _targetProjectPath set)`);
             return false;
         }
-        // Synchronous check — look through sessions for matching project
-        return this._hasActiveSessionSync();
+        const hasSession = this._hasActiveSessionSync();
+        logger.info(`🔍 [DEBUG] isConnected: ${hasSession} (targetProjectPath="${this._targetProjectPath}", sessionCount=${this._sessions.size})`);
+        return hasSession;
     }
 
     /**
@@ -446,14 +455,18 @@ export class UnityManager {
     async setTargetProject(projectPath: string): Promise<void> {
         const oldTarget = this._targetProjectPath;
         this._targetProjectPath = projectPath;
-        logger.info(`Target project set: ${projectPath}`);
+        logger.info(`🔍 [DEBUG] setTargetProject: "${projectPath}" (was: "${oldTarget || 'none'}")`);
+        logger.info(`🔍 [DEBUG] Current session count: ${this._sessions.size}`);
 
         // Check if we already have a connection for the new target
         const session = await this._sessions.getSessionForProject(projectPath);
+        logger.info(`🔍 [DEBUG] getSessionForProject result: ${session ? `found (state=${session.connection.state}, projectPath="${session.connection.projectPath}")` : 'NOT FOUND'}`);
+
         if (session && session.connection.state === ConnectionState.OPEN) {
-            logger.info(`Already connected to target project — activating`);
+            logger.info(`🔍 [DEBUG] ✅ Already connected to target project — activating`);
             await this._notifyConnectionChange(true);
         } else if (oldTarget !== projectPath) {
+            logger.info(`🔍 [DEBUG] ⚠️ No active connection for target project. Unity needs to connect.`);
             // Switching to a project we don't have a connection for
             await this._notifyConnectionChange(false);
         }

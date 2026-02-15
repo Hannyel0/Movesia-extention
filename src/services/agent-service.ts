@@ -507,7 +507,9 @@ export class AgentService {
     request: ChatRequest,
     onEvent: (event: AgentEvent) => void
   ): Promise<{ threadId: string }> {
+    this.log(`🔍 [DEBUG] handleChat() called. agent=${this.agent ? 'EXISTS' : '❌ NULL'}, projectPath="${this.config.projectPath || 'NOT SET'}", unityManager=${this.unityManager ? 'EXISTS' : 'NULL'}, isConnected=${this.unityManager?.isConnected}, wsServer=${this.wsServer ? 'running' : 'not running'}`)
     if (!this.agent) {
+      this.log('🔍 [DEBUG] ❌ handleChat blocked: agent is NULL')
       onEvent({ type: 'error', errorText: 'Agent not initialized' })
       onEvent({ type: 'done' })
       throw new Error('Agent not initialized')
@@ -558,7 +560,7 @@ export class AgentService {
       onEvent(protocol.start())
 
       // Stream agent execution events
-      const config = { configurable: { thread_id: threadId } }
+      const config = { configurable: { thread_id: threadId }, recursionLimit: 100 }
       const inputData = {
         messages: [{ role: 'human' as const, content: userText }],
       }
@@ -736,30 +738,37 @@ export class AgentService {
    */
   async setProjectPath(newPath: string): Promise<void> {
     const previousPath = this.config.projectPath
-    logger.info(
-      `Setting project path: ${newPath} (previous: ${previousPath || 'none'})`
-    )
+    this.log(`🔍 [DEBUG] setProjectPath() called: "${newPath}" (previous: "${previousPath || 'none'}")`)
 
     this.config.projectPath = newPath
     process.env.UNITY_PROJECT_PATH = newPath
+    this.log(`🔍 [DEBUG] config.projectPath and env updated`)
 
     // Also update the agent's project path
     const { setUnityProjectPath } = await import('../agent/agent')
     setUnityProjectPath(newPath)
+    this.log(`🔍 [DEBUG] setUnityProjectPath() called on agent module`)
 
     // Set target project on UnityManager (routes commands to matching Unity instance)
     if (this.unityManager) {
+      this.log(`🔍 [DEBUG] Calling unityManager.setTargetProject("${newPath}")...`)
       await this.unityManager.setTargetProject(newPath)
+      this.log(`🔍 [DEBUG] unityManager.setTargetProject() complete. isConnected=${this.unityManager.isConnected}, targetProjectPath="${this.unityManager.targetProjectPath}", connectionCount=${this.unityManager.connectionCount}`)
+    } else {
+      this.log(`🔍 [DEBUG] ❌ unityManager is NULL! Cannot set target project.`, 'warn')
     }
 
     // Start WebSocket server if not already running
     // (first project selection triggers the server)
     if (!this.wsServer) {
-      this.log('Project selected — starting WebSocket server...')
+      this.log('🔍 [DEBUG] WebSocket server not running yet — starting it now...')
       await this.startWebSocketServer()
+      this.log(`🔍 [DEBUG] WebSocket server started. wsServer is ${this.wsServer ? 'SET' : 'still NULL'}`)
+    } else {
+      this.log(`🔍 [DEBUG] WebSocket server already running — skipping start`)
     }
 
-    logger.info(`Project path updated successfully to: ${newPath}`)
+    this.log(`🔍 [DEBUG] setProjectPath() complete. Final state: projectPath="${this.config.projectPath}", isConnected=${this.unityManager?.isConnected}, wsServer=${this.wsServer ? 'running' : 'not running'}`)
   }
 
   /**

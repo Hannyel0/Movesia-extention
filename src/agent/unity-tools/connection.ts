@@ -37,15 +37,26 @@ export async function callUnityAsync(
     action: string,
     params: Record<string, unknown> = {}
 ): Promise<UnityResponse> {
-    console.log(`[Unity Tool] Calling action: ${action}`, params);
+    console.log(`[Unity Tool] 🔍 [DEBUG] callUnityAsync("${action}") called`);
+    console.log(`[Unity Tool] 🔍 [DEBUG] unityManager is ${unityManager === null ? '❌ NULL' : 'SET'}`);
 
     if (unityManager === null) {
-        console.error('[Unity Tool] Unity manager not initialized');
+        console.error('[Unity Tool] 🔍 [DEBUG] ❌ Unity manager is NULL — setUnityManager() was never called or failed');
         throw new Error('Unity manager not initialized. Tools cannot communicate with Unity.');
     }
 
+    const mgr = unityManager as any;
+    console.log(`[Unity Tool] 🔍 [DEBUG] unityManager.isConnected=${unityManager.isConnected}, targetProjectPath="${mgr._targetProjectPath || 'NOT SET'}", connectionCount=${mgr.connectionCount ?? 'N/A'}`);
+
     if (!unityManager.isConnected) {
-        console.warn('[Unity Tool] Unity not connected - returning error response');
+        const targetPath = mgr._targetProjectPath;
+        console.warn(`[Unity Tool] 🔍 [DEBUG] ❌ Unity NOT connected. Reasons could be:`);
+        if (!targetPath) {
+            console.warn(`[Unity Tool] 🔍 [DEBUG]   - _targetProjectPath is NOT SET (setTargetProject was never called)`);
+        } else {
+            console.warn(`[Unity Tool] 🔍 [DEBUG]   - _targetProjectPath="${targetPath}" but no matching Unity connection found`);
+            console.warn(`[Unity Tool] 🔍 [DEBUG]   - Total connections: ${mgr.connectionCount ?? 'N/A'}`);
+        }
         return {
             success: false,
             error: 'Unity is not connected. Please ensure Unity Editor is running and connected.',

@@ -187,6 +187,11 @@ public static class MessageHandler
                     await HandleGetTypeAliases(requestId, body);
                     break;
 
+                // --- Asset Deletion ---
+                case "delete_assets":
+                    await HandleDeleteAssets(requestId, body);
+                    break;
+
                 // --- Compilation/Refresh Operations ---
                 case "refresh_assets":
                     await HandleRefreshAssets(requestId, body);
@@ -789,6 +794,19 @@ public static class MessageHandler
     {
         var aliases = AssetSearch.GetTypeAliases();
         await SendResponse(requestId, "type_aliases", aliases);
+    }
+
+    // --- Asset Deletion Handlers ---
+
+    private static async Task HandleDeleteAssets(string requestId, JToken body)
+    {
+        var result = await DeletionManager.HandleDeleteRequest(requestId, body);
+
+        // If result is null, domain reload is happening and response will be sent after reload
+        if (result != null)
+        {
+            await SendResponse(requestId, "assets_deleted", result);
+        }
     }
 
     // --- Compilation Handlers ---

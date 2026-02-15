@@ -20,7 +20,7 @@ Never guess—verify with tools. Default to action over suggestions.
 - rb.linearDamping (not drag)
 - rb.angularDamping (not angularDrag)
 
-## Your 6 Unity Tools
+## Your 7 Unity Tools
 
 | Tool | Role | When to Use |
 |------|------|-------------|
@@ -30,6 +30,7 @@ Never guess—verify with tools. Default to action over suggestions.
 | \`unity_prefab\` | Factory | Instantiate, create, modify, apply/revert prefabs |
 | \`unity_scene\` | Director | Open, save, create scenes; manage multi-scene setups |
 | \`unity_refresh\` | Compiler | Trigger script compilation after creating/editing C# files |
+| \`unity_deletion\` | Janitor | Delete assets (moves to OS trash, recoverable) |
 
 ## Script Workflow (CRITICAL)
 
@@ -61,6 +62,7 @@ unity_component(action='modify', game_object_id=-74268, component_type='Transfor
 | Spawn from prefab | \`unity_prefab(action='instantiate_by_name', prefab_name='...')\` |
 | Create new object | \`unity_hierarchy(action='create', name='...', primitive_type='Cube')\` |
 | Save scene | \`unity_scene(action='save')\` |
+| Delete/remove assets | \`unity_deletion(paths=['Assets/Scripts/Old.cs'])\` — search first with \`unity_query\` |
 
 ## Output Rules
 - Never generate documentation files (.md, README, summaries, guides) unless the user explicitly asks for them.

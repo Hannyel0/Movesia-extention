@@ -174,13 +174,17 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   // Start agent initialization immediately (non-blocking)
-  log('Starting agent initialization...')
+  log('🔍 [DEBUG] Starting agent initialization (fire-and-forget async)...')
+  const agentInitStartTime = Date.now()
   initializeAgentService()
     .then(() => {
-      log('✅ Agent service initialization complete')
+      const elapsed = Date.now() - agentInitStartTime
+      log(`✅ Agent service initialization complete (took ${elapsed}ms)`)
+      log(`🔍 [DEBUG] agentService is now ${agentService ? 'AVAILABLE' : 'still NULL'}`)
     })
     .catch(err => {
-      log(`❌ Failed to initialize agent service: ${err?.message}`, 'error')
+      const elapsed = Date.now() - agentInitStartTime
+      log(`❌ Failed to initialize agent service after ${elapsed}ms: ${err?.message}`, 'error')
       console.error('[Extension] Error stack:', err?.stack)
     })
 
@@ -261,16 +265,29 @@ export function activate(context: vscode.ExtensionContext) {
 
       case 'setSelectedProject': {
         // Update both workspace state and agent service
-        console.log('[Extension] Setting selected project:', message.projectPath)
+        log(`🔍 [DEBUG] setSelectedProject received. projectPath="${message.projectPath}"`)
+        log(`🔍 [DEBUG] agentService is ${agentService ? 'INITIALIZED' : '❌ NULL (race condition!)'} at time of project selection`)
         await context.workspaceState.update(SELECTED_PROJECT_KEY, message.projectPath)
+        log(`🔍 [DEBUG] workspaceState updated with project path`)
         if (agentService) {
-          console.log('[Extension] Updating agent service with new project path')
-          await agentService.setProjectPath(message.projectPath)
+          log(`🔍 [DEBUG] Calling agentService.setProjectPath("${message.projectPath}")...`)
+          try {
+            await agentService.setProjectPath(message.projectPath)
+            log(`🔍 [DEBUG] ✅ agentService.setProjectPath() completed successfully`)
+            // Verify the state after setting
+            const status = agentService.getUnityStatus()
+            log(`🔍 [DEBUG] Unity status after setProjectPath: connected=${status.connected}, projectPath=${status.projectPath}, compiling=${status.isCompiling}`)
+            log(`🔍 [DEBUG] agentService.hasProjectPath()=${agentService.hasProjectPath()}, getProjectPath()="${agentService.getProjectPath()}"`)
+          } catch (err) {
+            log(`🔍 [DEBUG] ❌ agentService.setProjectPath() FAILED: ${(err as Error).message}`, 'error')
+          }
         } else {
-          console.warn('[Extension] Agent service not available - project path saved but not applied to agent')
+          log('🔍 [DEBUG] ❌ Agent service is NULL! This means initializeAgentService() has NOT finished yet.', 'warn')
+          log('🔍 [DEBUG] ❌ The project path was saved to workspaceState but NOT applied to the agent.', 'warn')
+          log('🔍 [DEBUG] ❌ WebSocket server was NOT started. Unity tools will NOT work.', 'warn')
         }
         postMessage({ type: 'selectedProject', projectPath: message.projectPath })
-        console.log('[Extension] Project selection complete')
+        log(`🔍 [DEBUG] setSelectedProject handler complete`)
         break
       }
 
@@ -374,11 +391,14 @@ export function activate(context: vscode.ExtensionContext) {
 
       case 'chat': {
         // Handle chat messages - stream agent response back to webview
+        log(`🔍 [DEBUG] Chat message received. threadId=${message.threadId || 'new'}`)
 
         // ── Auth gate: user must be signed in to use chat ──
         if (authService) {
           const authenticated = await authService.isAuthenticated()
+          log(`🔍 [DEBUG] Auth check: authenticated=${authenticated}`)
           if (!authenticated) {
+            log('🔍 [DEBUG] ❌ Chat blocked: user not authenticated')
             postMessage({
               type: 'agentEvent',
               event: { type: 'error', errorText: 'Please sign in to use Movesia.' },
@@ -389,6 +409,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         if (!agentService) {
+          log('🔍 [DEBUG] ❌ Chat blocked: agentService is NULL')
           postMessage({
             type: 'agentEvent',
             event: { type: 'error', errorText: 'Agent not initialized. Please wait and try again.' },
@@ -399,7 +420,11 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Check if project is selected (optional - agent can work without it but Unity tools won't work)
         const projectPath = context.workspaceState.get<string>(SELECTED_PROJECT_KEY)
+        log(`🔍 [DEBUG] Project path from workspaceState: "${projectPath || 'NOT SET'}"`)
+        log(`🔍 [DEBUG] agentService.getProjectPath(): "${agentService.getProjectPath() || 'NOT SET'}"`)
+        log(`🔍 [DEBUG] agentService Unity status: ${JSON.stringify(agentService.getUnityStatus())}`)
         if (!projectPath) {
+          log('🔍 [DEBUG] ❌ Chat blocked: no project path in workspaceState')
           postMessage({
             type: 'agentEvent',
             event: { type: 'error', errorText: 'No project selected. Please select a Unity project first.' },
