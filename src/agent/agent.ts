@@ -83,7 +83,7 @@ export const UNITY_PROJECT_PATH_RESOLVED = _unityProjectPath
  */
 export function createModel(apiKey?: string) {
   return new ChatOpenAI({
-    modelName: 'anthropic/claude-haiku-4.5',
+    modelName: 'minimax/minimax-m2.1',
     configuration: {
       baseURL: 'https://openrouter.ai/api/v1',
     },

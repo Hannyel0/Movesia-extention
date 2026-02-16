@@ -50,6 +50,7 @@ public static class CompilationManager
         EditorApplication.update += OnEditorUpdate;
 
         // Subscribe to compilation events for better error detection
+        CompilationPipeline.assemblyCompilationFinished += OnAssemblyCompilationFinished;
         CompilationPipeline.compilationFinished += OnCompilationFinished;
     }
 
@@ -88,17 +89,36 @@ public static class CompilationManager
     /// </summary>
     private static bool lastCompilationHadErrors = false;
     private static List<string> lastCompilationErrors = new List<string>();
+    private static List<string> _pendingCompilationErrors = new List<string>();
     
-    private static void OnCompilationFinished(object obj)
+    private static void OnAssemblyCompilationFinished(string assemblyPath, CompilerMessage[] messages)
     {
-        // Check for compilation errors
-        lastCompilationHadErrors = EditorUtility.scriptCompilationFailed;
-        lastCompilationErrors.Clear();
-        
-        if (lastCompilationHadErrors)
+        foreach (var msg in messages)
         {
-            // Capture error messages from console
-            lastCompilationErrors = GetCompilationErrorsFromConsole();
+            if (msg.type == CompilerMessageType.Error)
+            {
+                _pendingCompilationErrors.Add(msg.message);
+            }
+        }
+    }
+
+    private static async void OnCompilationFinished(object obj)
+    {
+        lastCompilationHadErrors = EditorUtility.scriptCompilationFailed;
+
+        // Grab the errors collected by OnAssemblyCompilationFinished
+        var collectedErrors = new List<string>(_pendingCompilationErrors);
+        _pendingCompilationErrors.Clear();
+
+        lastCompilationErrors = collectedErrors;
+
+        // If there's a pending request, send the result immediately
+        var pending = LoadPendingRequest();
+        if (pending != null)
+        {
+            ClearPendingRequest();
+            var result = BuildCompilationResultWithErrors(pending, collectedErrors);
+            await SendCompilationComplete(pending.requestId, result);
         }
     }
     
@@ -387,7 +407,51 @@ public static class CompilationManager
             compilationTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
         };
     }
-    
+
+    private static object BuildCompilationResultWithErrors(PendingCompilationRequest pending, List<string> errors)
+    {
+        bool hasErrors = errors.Count > 0;
+
+        var availableTypes = GetAvailableMonoBehaviours(customOnly: true, filter: null, limit: 50);
+
+        List<string> missingScripts = new List<string>();
+        List<string> foundScripts = new List<string>();
+
+        if (pending.watchedScripts != null && pending.watchedScripts.Length > 0)
+        {
+            foreach (var scriptName in pending.watchedScripts)
+            {
+                bool found = availableTypes.Any(t =>
+                    t.Equals(scriptName, StringComparison.OrdinalIgnoreCase) ||
+                    t.EndsWith("." + scriptName, StringComparison.OrdinalIgnoreCase));
+
+                if (found)
+                {
+                    foundScripts.Add(scriptName);
+                }
+                else
+                {
+                    missingScripts.Add(scriptName);
+                }
+            }
+        }
+
+        return new
+        {
+            success = !hasErrors && missingScripts.Count == 0,
+            recompiled = true,
+            hasErrors,
+            errors,
+            availableTypes,
+            watchedScripts = new
+            {
+                found = foundScripts,
+                missing = missingScripts
+            },
+            compilationTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+        };
+    }
+
     private static async Task SendCompilationComplete(string requestId, object result)
     {
         try

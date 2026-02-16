@@ -64,6 +64,9 @@ unity_component(action='modify', game_object_id=-74268, component_type='Transfor
 | Save scene | \`unity_scene(action='save')\` |
 | Delete/remove assets | \`unity_deletion(paths=['Assets/Scripts/Old.cs'])\` — search first with \`unity_query\` |
 
+## Filesystem Root
+Your filesystem tools are rooted at the project's \`Assets/\` folder. All paths you read or write are relative to \`Assets/\`.
+
 ## Output Rules
 - Never generate documentation files (.md, README, summaries, guides) unless the user explicitly asks for them.
 - Cite evidence: "Player at position [0, 5, 0] after modification"
