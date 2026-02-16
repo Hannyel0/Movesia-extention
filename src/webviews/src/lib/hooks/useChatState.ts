@@ -280,6 +280,16 @@ export function useChatState(options: UseChatStateOptions = {}): UseChatStateRet
       setStatus('submitted')
       setError(null)
 
+      // Generate a thread ID on the frontend if we don't have one yet.
+      // This prevents the bidirectional sync race condition that would
+      // push an old thread ID back before the backend could assign a new one.
+      let effectiveThreadId = threadId
+      if (!effectiveThreadId) {
+        effectiveThreadId = `thread_${crypto.randomUUID().replace(/-/g, '')}`
+        log('Chat', `Generated new frontend thread ID: ${effectiveThreadId}`)
+        setThreadId(effectiveThreadId)
+      }
+
       // Send to extension
       // Include all messages for context (agent needs conversation history)
       const allMessages = [
@@ -290,7 +300,7 @@ export function useChatState(options: UseChatStateOptions = {}): UseChatStateRet
       VSCodeAPI.postMessage({
         type: 'chat',
         messages: allMessages,
-        threadId: threadId || undefined,
+        threadId: effectiveThreadId,
       })
     },
     [messages, threadId]

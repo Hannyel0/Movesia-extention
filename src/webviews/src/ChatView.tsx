@@ -282,6 +282,13 @@ function ChatView() {
     [isLoading, sendMessage]
   )
 
+  // Wrap handleNewThread to also clear useChatState.threadId atomically
+  const handleNewThreadWrapped = useCallback(() => {
+    log('Clear', 'Starting new chat — clearing both thread IDs')
+    setThreadId(null)
+    handleNewThread()
+  }, [setThreadId, handleNewThread])
+
   const clearChat = useCallback(() => {
     log('Clear', 'Clearing chat')
     setMessages([])
@@ -357,7 +364,7 @@ function ChatView() {
             threads={threads}
             currentThreadId={effectiveThreadId}
             onSelectThread={handleSelectThread}
-            onNewThread={handleNewThread}
+            onNewThread={handleNewThreadWrapped}
             onDeleteThread={handleDeleteThread}
           />
         </div>
