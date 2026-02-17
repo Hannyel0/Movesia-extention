@@ -32,6 +32,8 @@ export const QuerySchema = z.object({
     // Log params
     log_filter: z.string().optional()
         .describe("'Error', 'Warning', or 'Exception'."),
+    log_count: z.number().int().optional()
+        .describe("Max number of recent logs to return. Defaults to 100."),
 
     // Settings params
     settings_category: z.string().optional()
@@ -52,6 +54,7 @@ async function unityQueryImpl(input: QueryInput, _config?: any): Promise<string>
         search_query,
         asset_type,
         log_filter,
+        log_count,
         settings_category
     } = input;
 
@@ -81,7 +84,7 @@ async function unityQueryImpl(input: QueryInput, _config?: any): Promise<string>
             break;
 
         case 'get_logs':
-            result = await callUnityAsync('get_logs', { filter: log_filter });
+            result = await callUnityAsync('get_logs', { filter: log_filter, limit: log_count });
             break;
 
         case 'get_settings':

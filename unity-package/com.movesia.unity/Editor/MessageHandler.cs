@@ -220,28 +220,33 @@ public static class MessageHandler
     
     private static async Task HandleGetLogs(string requestId, JToken body)
     {
-        int limit = body?["limit"]?.ToObject<int>() ?? 100;
+        int limit = body?["limit"]?.ToObject<int>() ?? 0;
         string filter = body?["filter"]?.ToString();
-        
+
         ConsoleLogBuffer.LogEntry[] logs;
-        
+
+        // Get logs — filtered or all
         if (!string.IsNullOrEmpty(filter))
         {
             logs = ConsoleLogBuffer.GetLogs(filter);
-        }
-        else if (limit < 100)
-        {
-            logs = ConsoleLogBuffer.GetRecentLogs(limit);
         }
         else
         {
             logs = ConsoleLogBuffer.GetLogs();
         }
-        
-        await SendResponse(requestId, "logs_response", new 
-        { 
+
+        // Apply limit after filtering — returns the most recent N
+        if (limit > 0 && logs.Length > limit)
+        {
+            var limited = new ConsoleLogBuffer.LogEntry[limit];
+            Array.Copy(logs, logs.Length - limit, limited, 0, limit);
+            logs = limited;
+        }
+
+        await SendResponse(requestId, "logs_response", new
+        {
             count = logs.Length,
-            logs 
+            logs
         });
     }
     
