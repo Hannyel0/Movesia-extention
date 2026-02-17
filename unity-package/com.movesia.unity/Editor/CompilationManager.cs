@@ -14,13 +14,18 @@ using System.Threading.Tasks;
 /// <summary>
 /// Manages script compilation requests from the agent.
 /// Persists pending requests across domain reloads and signals completion.
-/// 
+///
 /// Flow:
 /// 1. Agent creates/modifies .cs files via filesystem
 /// 2. Agent calls "refresh_assets" to trigger compilation
-/// 3. Unity compiles, domain reloads (WebSocket drops, memory wiped)
-/// 4. After reload, this class detects pending request and signals completion
-/// 5. Agent resumes from interrupt with compilation result
+/// 3. Three possible outcomes:
+///    a) No script changes → ProcessCompilationCheck responds immediately ("no changes")
+///    b) Compilation fails → OnCompilationFinished responds with errors (no domain reload)
+///    c) Compilation succeeds → domain reload → CheckAndResumePendingRequest responds after reconnect
+///
+/// Race prevention: _compilationStarted flag ensures ProcessCompilationCheck
+/// never steals the pending request when compilation was triggered but already
+/// finished with errors before the 100ms check fires.
 /// </summary>
 [InitializeOnLoad]
 public static class CompilationManager
@@ -59,6 +64,12 @@ public static class CompilationManager
     private static bool _compilationCheckPending = false;
     private static float _compilationCheckStartTime = 0;
 
+    // --- Flag to track whether compilation actually started ---
+    // Set true by OnAssemblyCompilationFinished, reset by HandleRefreshRequest.
+    // This prevents ProcessCompilationCheck from stealing the pending request
+    // when compilation fails fast (before the 100ms delay fires).
+    private static bool _compilationStarted = false;
+
     /// <summary>
     /// Runs continuously even without editor focus.
     /// Handles pending request checks after domain reload.
@@ -93,6 +104,10 @@ public static class CompilationManager
     
     private static void OnAssemblyCompilationFinished(string assemblyPath, CompilerMessage[] messages)
     {
+        // Mark that compilation actually started — this prevents ProcessCompilationCheck
+        // from incorrectly claiming "no script changes" when compilation fails fast
+        _compilationStarted = true;
+
         foreach (var msg in messages)
         {
             if (msg.type == CompilerMessageType.Error)
@@ -104,21 +119,40 @@ public static class CompilationManager
 
     private static async void OnCompilationFinished(object obj)
     {
-        lastCompilationHadErrors = EditorUtility.scriptCompilationFailed;
-
         // Grab the errors collected by OnAssemblyCompilationFinished
         var collectedErrors = new List<string>(_pendingCompilationErrors);
         _pendingCompilationErrors.Clear();
 
+        // ONLY use collected errors as the source of truth for THIS compilation cycle.
+        // EditorUtility.scriptCompilationFailed is unreliable:
+        //   - Can return false when there ARE errors (observed in practice)
+        //   - Can return true when errors are FIXED (stale from previous failure,
+        //     not yet cleared because domain reload hasn't happened)
+        // The errors collected from CompilationPipeline.assemblyCompilationFinished
+        // are always accurate for the current cycle.
+        lastCompilationHadErrors = collectedErrors.Count > 0;
         lastCompilationErrors = collectedErrors;
 
-        // If there's a pending request, send the result immediately
-        var pending = LoadPendingRequest();
-        if (pending != null)
+        // Reset the flag — compilation cycle is complete
+        _compilationStarted = false;
+
+        Debug.Log($"🔧 OnCompilationFinished: collectedErrors={collectedErrors.Count}, hasErrors={lastCompilationHadErrors}");
+
+        // If there are errors, send response immediately (no domain reload will happen).
+        // If no errors, domain reload is coming → CheckAndResumePendingRequest handles it.
+        if (lastCompilationHadErrors)
         {
-            ClearPendingRequest();
-            var result = BuildCompilationResultWithErrors(pending, collectedErrors);
-            await SendCompilationComplete(pending.requestId, result);
+            var pending = LoadPendingRequest();
+            if (pending != null)
+            {
+                ClearPendingRequest();
+                var result = BuildCompilationResultWithErrors(pending, collectedErrors);
+                await SendCompilationComplete(pending.requestId, result);
+            }
+            else
+            {
+                Debug.LogWarning("⚠️ Compilation had errors but no pending request found — response may have already been sent");
+            }
         }
     }
     
@@ -152,6 +186,9 @@ public static class CompilationManager
             Debug.Log($"🔄 Triggering asset refresh for request {requestId}");
             Debug.Log($"📁 Pending request saved to: {PendingRequestFile}");
 
+            // Reset compilation tracking flag before triggering refresh
+            _compilationStarted = false;
+
             // Trigger the refresh - this will cause domain reload if scripts changed
             // ImportAssetOptions.ForceUpdate ensures scripts are recompiled
             AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
@@ -181,11 +218,22 @@ public static class CompilationManager
 
     /// <summary>
     /// Called after delay via OnEditorUpdate to check if compilation started.
-    /// If not compiling, sends response immediately since no domain reload will happen.
+    /// If not compiling AND no compilation was triggered, sends "no changes" response.
+    /// If compilation started (even if already finished with errors), leaves
+    /// the pending request for OnCompilationFinished to handle.
     /// </summary>
     private static async void ProcessCompilationCheck()
     {
-        // If file still exists and not compiling, no domain reload will happen
+        // If compilation was triggered, don't touch the pending request —
+        // OnCompilationFinished owns it now (error case) or domain reload
+        // will happen (success case → CheckAndResumePendingRequest handles it)
+        if (_compilationStarted)
+        {
+            Debug.Log($"⏳ Compilation was triggered, deferring to OnCompilationFinished");
+            return;
+        }
+
+        // No compilation started and not compiling → genuinely no script changes
         if (File.Exists(PendingRequestFile) && !EditorApplication.isCompiling)
         {
             var pending = LoadPendingRequest();
@@ -197,7 +245,7 @@ public static class CompilationManager
             {
                 success = true,
                 recompiled = false,
-                message = "No script changes detected",
+                message = "Assets refreshed. No script changes detected (no recompilation needed).",
                 availableTypes = GetAvailableMonoBehaviours()
             };
 
@@ -206,7 +254,6 @@ public static class CompilationManager
 
             await WebSocketClient.Send("compilation_complete", response, pending.requestId);
         }
-        // If compiling, domain reload will happen and CheckAndResumePendingRequest handles it
     }
     
     /// <summary>
