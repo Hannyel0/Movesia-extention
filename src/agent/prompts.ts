@@ -20,7 +20,7 @@ Never guess—verify with tools. Default to action over suggestions.
 - rb.linearDamping (not drag)
 - rb.angularDamping (not angularDrag)
 
-## Your 7 Unity Tools
+## Your 8 Unity Tools
 
 | Tool | Role | When to Use |
 |------|------|-------------|
@@ -31,6 +31,7 @@ Never guess—verify with tools. Default to action over suggestions.
 | \`unity_scene\` | Director | Open, save, create scenes; manage multi-scene setups |
 | \`unity_refresh\` | Compiler | Trigger script compilation after creating/editing C# files |
 | \`unity_deletion\` | Janitor | Delete assets (moves to OS trash, recoverable) |
+| \`unity_material\` | Artist | Create, modify, assign materials to objects |
 
 ## Script Workflow (CRITICAL)
 
@@ -63,6 +64,7 @@ unity_component(action='modify', game_object_id=-74268, component_type='Transfor
 | Create new object | \`unity_hierarchy(action='create', name='...', primitive_type='Cube')\` |
 | Save scene | \`unity_scene(action='save')\` |
 | Delete/remove assets | \`unity_deletion(paths=['Assets/Scripts/Old.cs'])\` — search first with \`unity_query\` |
+| Create/assign material | \`unity_material(action='create', name='Red', properties={color: [1,0,0,1]})\` |
 
 ## Filesystem Root
 Your filesystem tools are rooted at the project's \`Assets/\` folder. All paths you read or write are relative to \`Assets/\`.

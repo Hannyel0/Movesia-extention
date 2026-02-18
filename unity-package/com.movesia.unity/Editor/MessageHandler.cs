@@ -14,6 +14,171 @@ using System.Collections.Generic;
 /// </summary>
 public static class MessageHandler
 {
+    // =========================================================================
+    // FUZZY KEY NORMALIZATION — protects against LLM field-name hallucination
+    // =========================================================================
+
+    /// <summary>
+    /// Normalize a JObject's keys so that LLM hallucinations like
+    /// "game_object_instance_ID", "gameObjectInstanceID", "shader_name", etc.
+    /// all resolve to the canonical camelCase field names.
+    ///
+    /// Algorithm: strip underscores + lowercase → match against canonical map.
+    /// Only renames keys that have a known canonical form; unknown keys pass through unchanged.
+    /// Recurses into nested JObjects that are listed in nestedKeys.
+    /// </summary>
+    private static JObject NormalizeKeys(JToken token, Dictionary<string, string> canonicalMap, HashSet<string> nestedKeys = null)
+    {
+        if (token == null || token.Type != JTokenType.Object)
+            return token as JObject;
+
+        var obj = (JObject)token;
+        var normalized = new JObject();
+
+        foreach (var prop in obj.Properties())
+        {
+            // Normalize: strip underscores, lowercase → lookup canonical name
+            string fuzzyKey = prop.Name.Replace("_", "").ToLowerInvariant();
+            string canonicalName;
+
+            if (canonicalMap.TryGetValue(fuzzyKey, out canonicalName))
+            {
+                // Recurse into known nested objects
+                if (nestedKeys != null && nestedKeys.Contains(canonicalName) && prop.Value.Type == JTokenType.Object)
+                {
+                    // Look up the nested canonical map
+                    Dictionary<string, string> nestedMap;
+                    if (NestedCanonicalMaps.TryGetValue(canonicalName, out nestedMap))
+                    {
+                        normalized[canonicalName] = NormalizeKeys(prop.Value, nestedMap);
+                    }
+                    else
+                    {
+                        normalized[canonicalName] = prop.Value;
+                    }
+                }
+                else
+                {
+                    normalized[canonicalName] = prop.Value;
+                }
+            }
+            else
+            {
+                // Unknown key — pass through as-is (could be a material property name like "_BaseColor")
+                normalized[prop.Name] = prop.Value;
+            }
+        }
+
+        return normalized;
+    }
+
+    // --- Material endpoint: canonical field names ---
+    // Key = lowercased + underscores stripped, Value = canonical camelCase name
+    private static readonly Dictionary<string, string> MaterialCanonicalMap =
+        new Dictionary<string, string>
+    {
+        // instanceId
+        { "instanceid",             "instanceId" },
+        { "materialinstanceid",     "instanceId" },
+        { "matinstanceid",          "instanceId" },
+        { "id",                     "instanceId" },
+
+        // assetPath
+        { "assetpath",              "assetPath" },
+        { "materialpath",           "assetPath" },
+        { "matpath",                "assetPath" },
+        { "path",                   "assetPath" },
+
+        // shaderName
+        { "shadername",             "shaderName" },
+        { "shader",                 "shaderName" },
+        { "shadertype",             "shaderName" },
+
+        // name
+        { "name",                   "name" },
+        { "materialname",           "name" },
+        { "matname",                "name" },
+
+        // savePath
+        { "savepath",               "savePath" },
+        { "outputpath",             "savePath" },
+        { "filepath",               "savePath" },
+        { "saveto",                 "savePath" },
+
+        // properties
+        { "properties",             "properties" },
+        { "props",                  "properties" },
+        { "params",                 "properties" },
+        { "parameters",             "properties" },
+        { "materialproperties",     "properties" },
+
+        // keywords
+        { "keywords",               "keywords" },
+        { "keyword",                "keywords" },
+        { "shaderkeywords",         "keywords" },
+
+        // assignTo
+        { "assignto",               "assignTo" },
+        { "assign",                 "assignTo" },
+        { "assigntarget",           "assignTo" },
+        { "target",                 "assignTo" },
+        { "attach",                 "assignTo" },
+        { "attachto",               "assignTo" },
+        { "applyto",                "assignTo" },
+    };
+
+    // --- assignTo nested object: canonical field names ---
+    private static readonly Dictionary<string, string> AssignToCanonicalMap =
+        new Dictionary<string, string>
+    {
+        // gameObjectInstanceId
+        { "gameobjectinstanceid",   "gameObjectInstanceId" },
+        { "gameobjectid",           "gameObjectInstanceId" },
+        { "goinstanceid",           "gameObjectInstanceId" },
+        { "gobjectid",              "gameObjectInstanceId" },
+        { "targetinstanceid",       "gameObjectInstanceId" },
+        { "instanceid",             "gameObjectInstanceId" },
+        { "objectid",               "gameObjectInstanceId" },
+
+        // slotIndex
+        { "slotindex",              "slotIndex" },
+        { "slotidx",                "slotIndex" },
+        { "materialslot",           "slotIndex" },
+        { "slot",                   "slotIndex" },
+        { "index",                  "slotIndex" },
+        { "materialindex",          "slotIndex" },
+    };
+
+    // --- list_shaders endpoint: canonical field names ---
+    private static readonly Dictionary<string, string> ListShadersCanonicalMap =
+        new Dictionary<string, string>
+    {
+        { "filter",                 "filter" },
+        { "search",                 "filter" },
+        { "query",                  "filter" },
+        { "name",                   "filter" },
+
+        { "includeproperties",      "includeProperties" },
+        { "withproperties",         "includeProperties" },
+        { "showproperties",         "includeProperties" },
+        { "properties",             "includeProperties" },
+
+        { "limit",                  "limit" },
+        { "max",                    "limit" },
+        { "count",                  "limit" },
+        { "maxresults",             "limit" },
+    };
+
+    // Which keys in MaterialCanonicalMap contain nested objects that need their own normalization
+    private static readonly HashSet<string> MaterialNestedKeys = new HashSet<string> { "assignTo" };
+
+    // Map from nested key name → its canonical map
+    private static readonly Dictionary<string, Dictionary<string, string>> NestedCanonicalMaps =
+        new Dictionary<string, Dictionary<string, string>>
+    {
+        { "assignTo", AssignToCanonicalMap }
+    };
+
     /// <summary>
     /// Process an incoming message and send response if needed.
     /// </summary>
@@ -26,11 +191,17 @@ public static class MessageHandler
             string requestId = envelope["id"]?.ToString();
             JToken body = envelope["body"];
 
-            Debug.Log($"📥 WS RECV: type={type}, id={requestId ?? "(null)"}");
-            Debug.Log($"🔍 Extracted requestId: {requestId ?? "(null)"}");
-            
+            bool isHeartbeat = type == "pong" || type == "hb";
+            if (!isHeartbeat)
+            {
+                Debug.Log($"📥 WS RECV: type={type}, id={requestId ?? "(null)"}");
+                Debug.Log($"🔍 Extracted requestId: {requestId ?? "(null)"}");
+            }
+
             switch (type)
             {
+                case "pong":
+                    break;  // Server heartbeat response — silently ignore
                 case "get_logs":
                     await HandleGetLogs(requestId, body);
                     break;
@@ -190,6 +361,15 @@ public static class MessageHandler
                 // --- Asset Deletion ---
                 case "delete_assets":
                     await HandleDeleteAssets(requestId, body);
+                    break;
+
+                // --- Material Operations ---
+                case "material":
+                    await HandleMaterial(requestId, body);
+                    break;
+
+                case "list_shaders":
+                    await HandleListShaders(requestId, body);
                     break;
 
                 // --- Compilation/Refresh Operations ---
@@ -814,6 +994,115 @@ public static class MessageHandler
         }
     }
 
+    // --- Material Operation Handlers ---
+
+    /// <summary>
+    /// Unified smart material endpoint. Determines action from what's provided:
+    ///   - No instanceId/assetPath → create new material (uses shaderName, name, savePath)
+    ///   - instanceId or assetPath → load existing material
+    ///   - properties/keywords present → modify the material
+    ///   - assignTo present → assign to a GameObject's Renderer
+    /// All steps in one call; each step is optional.
+    ///
+    /// Body: {
+    ///   instanceId?, assetPath?,                              // identify existing (omit to create)
+    ///   shaderName?, name?, savePath?,                        // creation params
+    ///   properties?: { color: [r,g,b,a], metallic: 0.5 },    // modification
+    ///   keywords?: { "_EMISSION": true },                     // keyword toggles
+    ///   assignTo?: { gameObjectInstanceId, slotIndex? }       // assignment
+    /// }
+    /// </summary>
+    private static async Task HandleMaterial(string requestId, JToken body)
+    {
+        // Normalize all field names to protect against LLM hallucination
+        // e.g. "shader_name" → "shaderName", "gameObjectInstanceID" → "gameObjectInstanceId"
+        var b = NormalizeKeys(body, MaterialCanonicalMap, MaterialNestedKeys);
+
+        int instanceId = b?["instanceId"]?.ToObject<int>() ?? 0;
+        string assetPath = b?["assetPath"]?.ToString();
+        string shaderName = b?["shaderName"]?.ToString();
+        string materialName = b?["name"]?.ToString();
+        string savePath = b?["savePath"]?.ToString();
+
+        // Parse properties (keys inside properties are NOT normalized here —
+        // MaterialManager.ResolvePropertyName handles alias resolution for those)
+        Dictionary<string, JToken> properties = null;
+        JObject propsObj = b?["properties"] as JObject;
+        if (propsObj != null && propsObj.Count > 0)
+        {
+            properties = new Dictionary<string, JToken>();
+            foreach (var prop in propsObj)
+            {
+                properties[prop.Key] = prop.Value;
+            }
+        }
+
+        // Parse keywords — accept both array (enable list) and object (toggle map)
+        Dictionary<string, bool> keywords = null;
+        var kwToken = b?["keywords"];
+        if (kwToken != null)
+        {
+            keywords = new Dictionary<string, bool>();
+            if (kwToken.Type == JTokenType.Array)
+            {
+                // ["_EMISSION", "_NORMALMAP"] → all enabled
+                foreach (var kw in kwToken.ToObject<string[]>())
+                {
+                    keywords[kw] = true;
+                }
+            }
+            else if (kwToken.Type == JTokenType.Object)
+            {
+                // { "_EMISSION": true, "_NORMALMAP": false }
+                foreach (var kw in (JObject)kwToken)
+                {
+                    keywords[kw.Key] = kw.Value.ToObject<bool>();
+                }
+            }
+        }
+
+        // Parse assignTo (already normalized by NormalizeKeys recursive handling)
+        int assignToGameObject = 0;
+        int assignSlotIndex = 0;
+        JToken assignToToken = b?["assignTo"];
+        if (assignToToken != null && assignToToken.Type == JTokenType.Object)
+        {
+            assignToGameObject = assignToToken["gameObjectInstanceId"]?.ToObject<int>() ?? 0;
+            assignSlotIndex = assignToToken["slotIndex"]?.ToObject<int>() ?? 0;
+        }
+
+        var result = MaterialManager.ManageMaterial(
+            instanceId: instanceId,
+            assetPath: assetPath,
+            shaderName: shaderName,
+            materialName: materialName,
+            savePath: savePath,
+            properties: properties,
+            keywords: keywords,
+            assignToGameObject: assignToGameObject,
+            assignSlotIndex: assignSlotIndex
+        );
+
+        await SendResponse(requestId, "material_result", result);
+    }
+
+    /// <summary>
+    /// List available shaders with their properties.
+    /// Body: { filter?, includeProperties?: true, limit?: 50 }
+    /// </summary>
+    private static async Task HandleListShaders(string requestId, JToken body)
+    {
+        // Normalize field names to protect against LLM hallucination
+        var b = NormalizeKeys(body, ListShadersCanonicalMap);
+
+        string filter = b?["filter"]?.ToString();
+        bool includeProperties = b?["includeProperties"]?.ToObject<bool>() ?? true;
+        int limit = b?["limit"]?.ToObject<int>() ?? 50;
+
+        var result = MaterialManager.ListShaders(filter, includeProperties, limit);
+        await SendResponse(requestId, "shaders_list", result);
+    }
+
     // --- Compilation Handlers ---
 
     /// <summary>
@@ -930,7 +1219,7 @@ public static class MessageHandler
 
     private static async Task SendResponse(string requestId, string type, object body)
     {
-        Debug.Log($"📤 SendResponse: requestId={requestId ?? "(null)"}, type={type}");
+        if (type != "pong") Debug.Log($"📤 SendResponse: requestId={requestId ?? "(null)"}, type={type}");
         await WebSocketClient.Send(type, body, requestId);
     }
 }

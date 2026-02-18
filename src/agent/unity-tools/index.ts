@@ -1,5 +1,5 @@
 /**
- * Unity Tools Package - The 7 Tools for Unity Editor manipulation.
+ * Unity Tools Package - The 8 Tools for Unity Editor manipulation.
  *
  * This package provides a clean interface for AI agents to interact with the Unity Editor
  * through WebSocket communication via the UnityManager.
@@ -12,6 +12,7 @@
  * - unity_scene: The Director - environment management
  * - unity_refresh: The Compiler - script compilation
  * - unity_deletion: The Janitor - asset deletion (moves to OS trash)
+ * - unity_material: The Artist - material creation, modification, and assignment
  *
  * Setup:
  *     Before using tools, register the Unity manager:
@@ -34,6 +35,7 @@ export { unityPrefab, PrefabSchema, type PrefabInput } from './prefab';
 export { unityScene, SceneSchema, type SceneInput } from './scene';
 export { unityRefresh, RefreshSchema, type RefreshInput } from './refresh';
 export { unityDeletion, DeletionSchema, type DeletionInput } from './deletion';
+export { unityMaterial, MaterialSchema, type MaterialInput } from './material';
 
 // Import tools for the array export
 import { unityQuery } from './query';
@@ -43,9 +45,10 @@ import { unityPrefab } from './prefab';
 import { unityScene } from './scene';
 import { unityRefresh } from './refresh';
 import { unityDeletion } from './deletion';
+import { unityMaterial } from './material';
 
 /**
- * The 7 Unity Tools as an array for easy registration with LangGraph.
+ * The 8 Unity Tools as an array for easy registration with LangGraph.
  *
  * Usage:
  *     import { unityTools } from './unity-tools';
@@ -59,6 +62,7 @@ export const unityTools = [
     unityScene,      // The Director - environment management
     unityRefresh,    // The Compiler - script compilation
     unityDeletion,   // The Janitor - asset deletion
+    unityMaterial,   // The Artist - material management
 ] as const;
 
 /** Type for any Unity tool */

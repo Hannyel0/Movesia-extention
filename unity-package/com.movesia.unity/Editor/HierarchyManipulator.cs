@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEditor;
 using UnityEngine.SceneManagement;
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 
@@ -995,7 +996,10 @@ public static class HierarchyManipulator
                     }
                     else if (value.Type == JTokenType.Object)
                     {
-                        var instanceId = value["instanceId"]?.ToObject<int>() ?? 0;
+                        // Normalize key lookup — LLMs send inconsistent casings (instanceId, instanceID, instance_id, etc.)
+                        var idProperty = ((JObject)value).Properties()
+                            .FirstOrDefault(p => p.Name.Replace("_", "").Equals("instanceid", StringComparison.OrdinalIgnoreCase));
+                        var instanceId = idProperty?.Value.ToObject<int>() ?? 0;
                         if (instanceId == 0)
                         {
                             property.objectReferenceValue = null;
@@ -1026,7 +1030,38 @@ public static class HierarchyManipulator
                 
                 case SerializedPropertyType.ManagedReference:
                     return "ManagedReference modification not yet supported";
-                
+
+                case SerializedPropertyType.Generic:
+                    // Handle arrays/lists — LLMs send "m_Materials": [...] or "m_Materials": <single value>
+                    if (property.isArray)
+                    {
+                        // Normalize: wrap single values into an array so both formats work
+                        JArray elements;
+                        if (value.Type == JTokenType.Array)
+                        {
+                            elements = (JArray)value;
+                        }
+                        else
+                        {
+                            // Single value — treat as a one-element array
+                            elements = new JArray(value);
+                        }
+
+                        // Resize the array to match incoming element count
+                        property.arraySize = elements.Count;
+
+                        // Set each element recursively
+                        for (int i = 0; i < elements.Count; i++)
+                        {
+                            var elementProp = property.GetArrayElementAtIndex(i);
+                            string elementError = SetPropertyValue(elementProp, elements[i]);
+                            if (elementError != null)
+                                return $"Failed to set element [{i}]: {elementError}";
+                        }
+                        return null;
+                    }
+                    return $"Property type 'Generic' (non-array) is not supported for modification";
+
                 default:
                     return $"Property type '{property.propertyType}' is not supported for modification";
             }

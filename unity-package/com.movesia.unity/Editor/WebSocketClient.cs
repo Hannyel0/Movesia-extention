@@ -295,7 +295,9 @@ public static class WebSocketClient
 
         try
         {
-            Debug.Log($"📨 WebSocketClient.Send: using id={requestId ?? "(null)"} for type={type}");
+            bool verbose = type != "hb";
+
+            if (verbose) Debug.Log($"📨 WebSocketClient.Send: using id={requestId ?? "(null)"} for type={type}");
 
             var envelope = new
             {
@@ -307,9 +309,9 @@ public static class WebSocketClient
             };
             string json = JsonConvert.SerializeObject(envelope);
 
-            Debug.Log($"📡 WS SEND: type={type}, id={requestId ?? "(null)"}");
+            if (verbose) Debug.Log($"📡 WS SEND: type={type}, id={requestId ?? "(null)"}");
             await ws.SendText(json);
-            Debug.Log($"📤 Sent: {json}");
+            if (verbose) Debug.Log($"📤 Sent: {json}");
         }
         catch (Exception ex)
         {
