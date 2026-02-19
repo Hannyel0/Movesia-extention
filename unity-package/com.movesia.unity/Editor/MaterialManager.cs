@@ -217,7 +217,7 @@ public static class MaterialManager
             int instanceId = value.ToObject<int>();
             if (instanceId == 0)
                 return (null, null);
-            var obj = EditorUtility.InstanceIDToObject(instanceId) as Texture;
+            var obj = EditorUtility.EntityIdToObject(instanceId) as Texture;
             if (obj == null)
                 return (null, $"Texture with instanceId {instanceId} not found");
             return (obj, null);
@@ -242,7 +242,7 @@ public static class MaterialManager
             if (idProp != null)
             {
                 int instanceId = idProp.Value.ToObject<int>();
-                var obj = EditorUtility.InstanceIDToObject(instanceId) as Texture;
+                var obj = EditorUtility.EntityIdToObject(instanceId) as Texture;
                 if (obj == null)
                     return (null, $"Texture with instanceId {instanceId} not found");
                 return (obj, null);
@@ -458,7 +458,7 @@ public static class MaterialManager
             // Try to load existing material
             if (instanceId != 0)
             {
-                material = EditorUtility.InstanceIDToObject(instanceId) as Material;
+                material = EditorUtility.EntityIdToObject(instanceId) as Material;
             }
 
             if (material == null && !string.IsNullOrEmpty(assetPath))
@@ -571,7 +571,7 @@ public static class MaterialManager
 
             if (assignToGameObject != 0)
             {
-                var go = EditorUtility.InstanceIDToObject(assignToGameObject) as GameObject;
+                var go = EditorUtility.EntityIdToObject(assignToGameObject) as GameObject;
                 if (go == null)
                 {
                     return new MaterialResult

@@ -267,7 +267,7 @@ public static class WebSocketClient
         {
             try
             {
-                _ = MessageHandler.HandleMessage(msg);
+                _ = MessageRouter.HandleMessage(msg);
             }
             catch (Exception ex)
             {

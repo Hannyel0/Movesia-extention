@@ -157,7 +157,7 @@ public static class CompilationManager
     }
     
     // =========================================================================
-    // PUBLIC API - Called by MessageHandler
+    // PUBLIC API - Called by CompilationHandlers
     // =========================================================================
     
     /// <summary>

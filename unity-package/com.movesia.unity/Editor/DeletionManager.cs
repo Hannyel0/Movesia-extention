@@ -74,14 +74,14 @@ public static class DeletionManager
     }
 
     // =========================================================================
-    // PUBLIC API - Called by MessageHandler
+    // PUBLIC API - Called by AssetHandlers
     // =========================================================================
 
     /// <summary>
     /// Handles the "delete_assets" request from the agent.
     /// If deleting .cs/.asmdef files, saves pending request and defers response until after domain reload.
     /// Otherwise responds immediately.
-    /// Returns null when deferring (MessageHandler should NOT send a response).
+    /// Returns null when deferring (AssetHandlers should NOT send a response).
     /// </summary>
     public static Task<object> HandleDeleteRequest(string requestId, JToken body)
     {

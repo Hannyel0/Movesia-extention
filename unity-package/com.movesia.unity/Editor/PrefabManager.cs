@@ -412,7 +412,7 @@ public static class PrefabManager
             Transform parent = null;
             if (parentInstanceId.HasValue)
             {
-                var parentGo = EditorUtility.InstanceIDToObject(parentInstanceId.Value) as GameObject;
+                var parentGo = EditorUtility.EntityIdToObject(parentInstanceId.Value) as GameObject;
                 if (parentGo != null)
                 {
                     parent = parentGo.transform;
@@ -513,7 +513,7 @@ public static class PrefabManager
     {
         try
         {
-            var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            var go = EditorUtility.EntityIdToObject(instanceId) as GameObject;
             if (go == null)
             {
                 return new PrefabResult { success = false, error = "GameObject not found" };
@@ -678,7 +678,7 @@ public static class PrefabManager
     {
         try
         {
-            var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            var go = EditorUtility.EntityIdToObject(instanceId) as GameObject;
             if (go == null)
             {
                 return new PrefabResult { success = false, error = "GameObject not found" };
@@ -716,7 +716,7 @@ public static class PrefabManager
     {
         try
         {
-            var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            var go = EditorUtility.EntityIdToObject(instanceId) as GameObject;
             if (go == null)
             {
                 return new PrefabResult { success = false, error = "GameObject not found" };
@@ -754,7 +754,7 @@ public static class PrefabManager
     {
         try
         {
-            var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            var go = EditorUtility.EntityIdToObject(instanceId) as GameObject;
             if (go == null)
             {
                 return new PrefabResult { success = false, error = "GameObject not found" };

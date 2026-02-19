@@ -47,7 +47,7 @@ public static class ComponentInspector
     /// </summary>
     public static RawComponentData DumpComponent(int instanceId)
     {
-        var obj = EditorUtility.InstanceIDToObject(instanceId);
+        var obj = EditorUtility.EntityIdToObject(instanceId);
         if (obj is Component comp)
         {
             var jsonString = EditorJsonUtility.ToJson(comp, false);

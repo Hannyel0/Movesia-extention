@@ -14,10 +14,22 @@ External Agent (Python/Node server at ws://127.0.0.1:8765/ws/unity)
 WebSocketClient.cs  ← auto-connects on editor load via [InitializeOnLoad]
     ↓ incoming messages queued to ConcurrentQueue
     ↓ dispatched on main thread via EditorApplication.update
-MessageHandler.cs   ← routes by "type" field to handler classes
+Editor/Handlers/MessageRouter.cs ← routes by "type" field to handler files
     ↓
+┌─────────────────────────────────────────────────────────┐
+│ Handler Files (Editor/Handlers/, parse body + dispatch):│
+│  • LogHandlers          (ping, get_logs, get_errors)    │
+│  • HierarchyHandlers    (hierarchy reads + GO CRUD)     │
+│  • ComponentHandlers    (add/remove/modify components)  │
+│  • PrefabHandlers       (unified + legacy prefab ops)   │
+│  • SceneHandlers        (scene CRUD)                    │
+│  • AssetHandlers        (search + deletion)             │
+│  • MaterialHandlers     (material + list_shaders)       │
+│  • CompilationHandlers  (refresh + status + types)      │
+└─────────────────────────────────────────────────────────┘
+    ↓ delegates to
 ┌─────────────────────────────────────────────────┐
-│ Handler Classes (all static, all editor-only):  │
+│ Manager Classes (all static, all editor-only):  │
 │  • HierarchyTracker      (read scene tree)      │
 │  • HierarchyManipulator  (CRUD GameObjects)     │
 │  • ComponentInspector     (dump component JSON)  │
@@ -56,7 +68,15 @@ Every message (both directions) is a JSON envelope:
 |------|---------|
 | `package.json` | UPM manifest. Depends on `com.unity.nuget.newtonsoft-json`. Min Unity 2021.3 |
 | `Editor/WebSocketClient.cs` | `[InitializeOnLoad]` static class. Manages WS connection lifecycle: auto-connect, heartbeat (25s + jitter), exponential backoff reconnection, session persistence via `EditorPrefs`. Connects to `ws://127.0.0.1:8765/ws/unity` |
-| `Editor/MessageHandler.cs` | Central message router. Giant `switch(type)` dispatching ~37 message types to handler methods. Also contains `HandleGetAvailableTypes` inline |
+| `Editor/Handlers/MessageRouter.cs` | Central message router. `switch(type)` dispatching ~37 message types to handler classes. Also contains `NormalizeKeys` fuzzy key utility and `SendResponse` helper |
+| `Editor/Handlers/LogHandlers.cs` | Handles ping, get_logs, get_errors, clear_logs |
+| `Editor/Handlers/HierarchyHandlers.cs` | Handles hierarchy reads (get_hierarchy, get_scenes, get_components, get_project_settings) and all GameObject manipulation (create, duplicate, destroy, rename, set_parent, etc.) |
+| `Editor/Handlers/ComponentHandlers.cs` | Handles add_component, remove_component, modify_component |
+| `Editor/Handlers/PrefabHandlers.cs` | Handles unified "prefab" endpoint and all legacy prefab operations. Contains `PrefabCanonicalMap` for fuzzy key normalization |
+| `Editor/Handlers/SceneHandlers.cs` | Handles create_scene, open_scene, save_scene, set_active_scene |
+| `Editor/Handlers/AssetHandlers.cs` | Handles search_assets, get_asset_labels, get_type_aliases, delete_assets |
+| `Editor/Handlers/MaterialHandlers.cs` | Handles unified "material" endpoint and list_shaders. Contains `MaterialCanonicalMap` and `ListShadersCanonicalMap` for fuzzy key normalization |
+| `Editor/Handlers/CompilationHandlers.cs` | Handles refresh_assets, get_compilation_status, get_available_types |
 | `Editor/HierarchyTracker.cs` | Read-only scene hierarchy capture. Returns `HierarchySnapshot` with scenes, GameObjects (recursive with depth limit), components, prefab info |
 | `Editor/HierarchyManipulator.cs` | Full GameObject CRUD with Undo support. Create (empty/primitive), duplicate, destroy, rename, reparent, reorder, move-to-scene, set-active, set-transform. Also handles `ModifyComponent` using `SerializedObject`/`SerializedProperty` for type-safe property editing |
 | `Editor/ComponentInspector.cs` | Dumps component data as raw JSON via `EditorJsonUtility.ToJson()` |
@@ -133,11 +153,11 @@ The server uses custom close codes (4000-4999 range):
 ## Common Tasks
 
 ### Adding a new message type
-1. Add a `case "your_type":` in `MessageHandler.HandleMessage()` switch
-2. Create a `HandleYourType(string requestId, JToken body)` method
+1. Add a `case "your_type":` in `MessageRouter.HandleMessage()` switch (in `Editor/Handlers/MessageRouter.cs`)
+2. Add a `HandleYourType(string requestId, JToken body)` method in the appropriate `*Handlers.cs` file (or create a new one in `Editor/Handlers/`)
 3. Extract parameters from `body` using `body?["param"]?.ToObject<T>()`
-4. Call the appropriate handler class method
-5. Send response via `await SendResponse(requestId, "your_response_type", result)`
+4. Call the appropriate manager class method
+5. Send response via `await MessageRouter.SendResponse(requestId, "your_response_type", result)`
 
 ### Adding a new handler class
 1. Create `Editor/YourManager.cs`

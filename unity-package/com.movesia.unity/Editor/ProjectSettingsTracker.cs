@@ -91,7 +91,6 @@ public static class ProjectSettingsTracker
         public float sleepThreshold;
         public float defaultContactOffset;
         public bool autoSimulation;
-        public bool autoSyncTransforms;
     }
     
     [Serializable]
@@ -252,8 +251,7 @@ public static class ProjectSettingsTracker
             bounceThreshold = Physics.bounceThreshold,
             sleepThreshold = Physics.sleepThreshold,
             defaultContactOffset = Physics.defaultContactOffset,
-            autoSimulation = Physics.simulationMode != SimulationMode.Script,
-            autoSyncTransforms = Physics.autoSyncTransforms
+            autoSimulation = Physics.simulationMode != SimulationMode.Script
         };
     }
     

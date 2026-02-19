@@ -100,7 +100,7 @@ public static class HierarchyManipulator
             // Set parent
             if (parentInstanceId.HasValue)
             {
-                var parent = EditorUtility.InstanceIDToObject(parentInstanceId.Value) as GameObject;
+                var parent = EditorUtility.EntityIdToObject(parentInstanceId.Value) as GameObject;
                 if (parent != null)
                 {
                     Undo.SetTransformParent(go.transform, parent.transform, "Set Parent");
@@ -182,7 +182,7 @@ public static class HierarchyManipulator
     {
         try
         {
-            var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            var go = EditorUtility.EntityIdToObject(instanceId) as GameObject;
             if (go == null)
             {
                 return new ManipulationResult { success = false, error = "GameObject not found" };
@@ -220,7 +220,7 @@ public static class HierarchyManipulator
     {
         try
         {
-            var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            var go = EditorUtility.EntityIdToObject(instanceId) as GameObject;
             if (go == null)
             {
                 return new ManipulationResult { success = false, error = "GameObject not found" };
@@ -249,7 +249,7 @@ public static class HierarchyManipulator
     {
         try
         {
-            var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            var go = EditorUtility.EntityIdToObject(instanceId) as GameObject;
             if (go == null)
             {
                 return new ManipulationResult { success = false, error = "GameObject not found" };
@@ -278,7 +278,7 @@ public static class HierarchyManipulator
     {
         try
         {
-            var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            var go = EditorUtility.EntityIdToObject(instanceId) as GameObject;
             if (go == null)
             {
                 return new ManipulationResult { success = false, error = "GameObject not found" };
@@ -287,7 +287,7 @@ public static class HierarchyManipulator
             Transform newParent = null;
             if (parentInstanceId.HasValue)
             {
-                var parentGo = EditorUtility.InstanceIDToObject(parentInstanceId.Value) as GameObject;
+                var parentGo = EditorUtility.EntityIdToObject(parentInstanceId.Value) as GameObject;
                 if (parentGo == null)
                 {
                     return new ManipulationResult { success = false, error = "Parent GameObject not found" };
@@ -317,7 +317,7 @@ public static class HierarchyManipulator
     {
         try
         {
-            var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            var go = EditorUtility.EntityIdToObject(instanceId) as GameObject;
             if (go == null)
             {
                 return new ManipulationResult { success = false, error = "GameObject not found" };
@@ -345,7 +345,7 @@ public static class HierarchyManipulator
     {
         try
         {
-            var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            var go = EditorUtility.EntityIdToObject(instanceId) as GameObject;
             if (go == null)
             {
                 return new ManipulationResult { success = false, error = "GameObject not found" };
@@ -384,7 +384,7 @@ public static class HierarchyManipulator
     {
         try
         {
-            var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            var go = EditorUtility.EntityIdToObject(instanceId) as GameObject;
             if (go == null)
             {
                 return new ManipulationResult { success = false, error = "GameObject not found" };
@@ -418,7 +418,7 @@ public static class HierarchyManipulator
     {
         try
         {
-            var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            var go = EditorUtility.EntityIdToObject(instanceId) as GameObject;
             if (go == null)
             {
                 return new ManipulationResult { success = false, error = "GameObject not found" };
@@ -465,7 +465,7 @@ public static class HierarchyManipulator
     {
         try
         {
-            var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            var go = EditorUtility.EntityIdToObject(instanceId) as GameObject;
             if (go == null)
             {
                 return new ManipulationResult { success = false, error = "GameObject not found" };
@@ -501,7 +501,7 @@ public static class HierarchyManipulator
     {
         try
         {
-            var component = EditorUtility.InstanceIDToObject(componentInstanceId) as Component;
+            var component = EditorUtility.EntityIdToObject(componentInstanceId) as Component;
             if (component == null)
             {
                 return new ManipulationResult { success = false, error = "Component not found" };
@@ -560,12 +560,12 @@ public static class HierarchyManipulator
             // Option 1: Direct component ID
             if (componentInstanceId != 0)
             {
-                component = EditorUtility.InstanceIDToObject(componentInstanceId) as Component;
+                component = EditorUtility.EntityIdToObject(componentInstanceId) as Component;
             }
             // Option 2: Resolve from GameObject + type
             else if (gameObjectInstanceId != 0 && !string.IsNullOrEmpty(componentType))
             {
-                var go = EditorUtility.InstanceIDToObject(gameObjectInstanceId) as GameObject;
+                var go = EditorUtility.EntityIdToObject(gameObjectInstanceId) as GameObject;
                 if (go == null)
                 {
                     return new ModifyComponentResult
@@ -988,7 +988,7 @@ public static class HierarchyManipulator
                             property.objectReferenceValue = null;
                             return null;
                         }
-                        var obj = EditorUtility.InstanceIDToObject(instanceId);
+                        var obj = EditorUtility.EntityIdToObject(instanceId);
                         if (obj == null)
                             return $"Object with instanceId {instanceId} not found";
                         property.objectReferenceValue = obj;
@@ -1021,7 +1021,7 @@ public static class HierarchyManipulator
                                 property.objectReferenceValue = null;
                                 return null;
                             }
-                            var obj = EditorUtility.InstanceIDToObject(instanceId);
+                            var obj = EditorUtility.EntityIdToObject(instanceId);
                             if (obj == null)
                                 return $"Object with instanceId {instanceId} not found";
                             property.objectReferenceValue = obj;
