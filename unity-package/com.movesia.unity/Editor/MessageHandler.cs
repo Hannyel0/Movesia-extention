@@ -179,6 +179,71 @@ public static class MessageHandler
         { "assignTo", AssignToCanonicalMap }
     };
 
+    // --- Unified prefab endpoint: canonical field names ---
+    private static readonly Dictionary<string, string> PrefabCanonicalMap =
+        new Dictionary<string, string>
+    {
+        // instanceId (scene GO for create/apply)
+        { "instanceid",             "instanceId" },
+        { "gameobjectinstanceid",   "instanceId" },
+        { "goinstanceid",           "instanceId" },
+        { "objectid",               "instanceId" },
+        { "id",                     "instanceId" },
+
+        // assetPath (prefab asset path for instantiate/modify)
+        { "assetpath",              "assetPath" },
+        { "prefabpath",             "assetPath" },
+        { "path",                   "assetPath" },
+        { "prefabassetpath",        "assetPath" },
+
+        // prefabName (search-based instantiate)
+        { "prefabname",             "prefabName" },
+        { "name",                   "prefabName" },
+        { "searchname",             "prefabName" },
+
+        // parentInstanceId
+        { "parentinstanceid",       "parentInstanceId" },
+        { "parentid",               "parentInstanceId" },
+        { "parent",                 "parentInstanceId" },
+
+        // position
+        { "position",               "position" },
+        { "pos",                    "position" },
+        { "worldposition",          "position" },
+        { "localposition",          "position" },
+
+        // rotation
+        { "rotation",               "rotation" },
+        { "rot",                    "rotation" },
+        { "eulerrotation",          "rotation" },
+        { "eulerangles",            "rotation" },
+
+        // scale
+        { "scale",                  "scale" },
+        { "localscale",             "scale" },
+
+        // savePath (for create from GO)
+        { "savepath",               "savePath" },
+        { "outputpath",             "savePath" },
+        { "saveto",                 "savePath" },
+
+        // componentType (for modify)
+        { "componenttype",          "componentType" },
+        { "component",              "componentType" },
+        { "comptype",               "componentType" },
+
+        // targetPath (for modify — child path within prefab)
+        { "targetpath",             "targetPath" },
+        { "childpath",              "targetPath" },
+        { "target",                 "targetPath" },
+
+        // properties (for modify)
+        { "properties",             "properties" },
+        { "props",                  "properties" },
+        { "params",                 "properties" },
+        { "parameters",             "properties" },
+    };
+
     /// <summary>
     /// Process an incoming message and send response if needed.
     /// </summary>
@@ -283,7 +348,12 @@ public static class MessageHandler
                     await HandleModifyComponent(requestId, body);
                     break;
 
-                // --- Prefab Operations ---
+                // --- Unified Prefab Endpoint ---
+                case "prefab":
+                    await HandlePrefab(requestId, body);
+                    break;
+
+                // --- Legacy Prefab Operations (kept for backwards compatibility) ---
                 case "list_prefabs":
                     await HandleListPrefabs(requestId, body);
                     break;
@@ -720,7 +790,85 @@ public static class MessageHandler
         await SendResponse(requestId, "component_modified", result);
     }
 
-    // --- Prefab Operation Handlers ---
+    // --- Unified Prefab Handler ---
+
+    /// <summary>
+    /// Unified smart prefab endpoint. Phases execute sequentially:
+    ///
+    /// Phase 1 — Resolve/obtain the prefab (pick one):
+    ///   • prefabName                   → INSTANTIATE by name search
+    ///   • assetPath (no modify fields) → INSTANTIATE by path
+    ///   • instanceId + savePath        → CREATE prefab from scene GO
+    ///   • assetPath + modify fields    → resolve path only (skip to Phase 2)
+    ///   • instanceId alone             → APPLY overrides to prefab asset
+    ///
+    /// Phase 2 — Modify (optional, chains after Phase 1):
+    ///   • componentType + properties   → MODIFY component on the prefab asset
+    ///
+    /// Compound examples:
+    ///   - Create + Modify:  { instanceId, savePath, componentType, properties }
+    ///   - Instantiate + Modify:  { prefabName, position, componentType, properties }
+    ///
+    /// Body: {
+    ///   prefabName?,                                    // instantiate by name
+    ///   assetPath?,                                     // instantiate by path or modify
+    ///   instanceId?,                                    // scene GO for create/apply
+    ///   parentInstanceId?, position?, rotation?, scale?, // instantiation params
+    ///   savePath?,                                      // creation param
+    ///   componentType?, targetPath?, properties?        // modification params (Phase 2)
+    /// }
+    /// </summary>
+    private static async Task HandlePrefab(string requestId, JToken body)
+    {
+        // Normalize all field names to protect against LLM hallucination
+        var b = NormalizeKeys(body, PrefabCanonicalMap);
+
+        int instanceId = b?["instanceId"]?.ToObject<int>() ?? 0;
+        string assetPath = b?["assetPath"]?.ToString();
+        string prefabName = b?["prefabName"]?.ToString();
+
+        // Instantiation params
+        int? parentInstanceId = b?["parentInstanceId"]?.ToObject<int?>();
+        float[] position = b?["position"]?.ToObject<float[]>();
+        float[] rotation = b?["rotation"]?.ToObject<float[]>();
+        float[] scale = b?["scale"]?.ToObject<float[]>();
+
+        // Creation params
+        string savePath = b?["savePath"]?.ToString();
+
+        // Modification params
+        string componentType = b?["componentType"]?.ToString();
+        string targetPath = b?["targetPath"]?.ToString();
+
+        Dictionary<string, JToken> properties = null;
+        JObject propsObj = b?["properties"] as JObject;
+        if (propsObj != null && propsObj.Count > 0)
+        {
+            properties = new Dictionary<string, JToken>();
+            foreach (var prop in propsObj)
+            {
+                properties[prop.Key] = prop.Value;
+            }
+        }
+
+        var result = PrefabManager.ManagePrefab(
+            instanceId: instanceId,
+            assetPath: assetPath,
+            prefabName: prefabName,
+            parentInstanceId: parentInstanceId,
+            position: position,
+            rotation: rotation,
+            scale: scale,
+            savePath: savePath,
+            componentType: componentType,
+            targetPath: targetPath,
+            properties: properties
+        );
+
+        await SendResponse(requestId, "prefab_result", result);
+    }
+
+    // --- Legacy Prefab Operation Handlers (kept for backwards compatibility) ---
 
     private static async Task HandleListPrefabs(string requestId, JToken body)
     {

@@ -58,7 +58,7 @@ public static class SceneManagement
                     savePath += ".unity";
 
                 // Ensure directory exists
-                string directory = Path.GetDirectoryName(savePath);
+                string directory = Path.GetDirectoryName(savePath)?.Replace('\\', '/');
                 if (!string.IsNullOrEmpty(directory) && !AssetDatabase.IsValidFolder(directory))
                 {
                     string[] parts = directory.Split('/');
@@ -206,7 +206,7 @@ public static class SceneManagement
                 path += ".unity";
 
             // Ensure directory exists
-            string directory = Path.GetDirectoryName(path);
+            string directory = Path.GetDirectoryName(path)?.Replace('\\', '/');
             if (!string.IsNullOrEmpty(directory) && !AssetDatabase.IsValidFolder(directory))
             {
                 string[] parts = directory.Split('/');

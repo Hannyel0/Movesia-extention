@@ -974,7 +974,7 @@ public static class HierarchyManipulator
                     return null;
                 
                 case SerializedPropertyType.ObjectReference:
-                    // Accept instanceId to set object reference
+                    // Accept instanceId (int), assetPath (string), null, or object { instanceId / assetPath }
                     if (value.Type == JTokenType.Null)
                     {
                         property.objectReferenceValue = null;
@@ -994,24 +994,60 @@ public static class HierarchyManipulator
                         property.objectReferenceValue = obj;
                         return null;
                     }
-                    else if (value.Type == JTokenType.Object)
+                    else if (value.Type == JTokenType.String)
                     {
-                        // Normalize key lookup — LLMs send inconsistent casings (instanceId, instanceID, instance_id, etc.)
-                        var idProperty = ((JObject)value).Properties()
-                            .FirstOrDefault(p => p.Name.Replace("_", "").Equals("instanceid", StringComparison.OrdinalIgnoreCase));
-                        var instanceId = idProperty?.Value.ToObject<int>() ?? 0;
-                        if (instanceId == 0)
-                        {
-                            property.objectReferenceValue = null;
-                            return null;
-                        }
-                        var obj = EditorUtility.InstanceIDToObject(instanceId);
+                        // Accept asset path string — load via AssetDatabase
+                        string assetPath = value.ToString();
+                        if (!assetPath.StartsWith("Assets"))
+                            assetPath = "Assets/" + assetPath.TrimStart('/');
+                        var obj = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
                         if (obj == null)
-                            return $"Object with instanceId {instanceId} not found";
+                            return $"Asset not found at path: {assetPath}";
                         property.objectReferenceValue = obj;
                         return null;
                     }
-                    return "ObjectReference requires instanceId (int) or { instanceId: int }";
+                    else if (value.Type == JTokenType.Object)
+                    {
+                        var valueObj = (JObject)value;
+
+                        // Try instanceId first (normalize key: instanceId, instance_id, instanceID, etc.)
+                        var idProperty = valueObj.Properties()
+                            .FirstOrDefault(p => p.Name.Replace("_", "").Equals("instanceid", StringComparison.OrdinalIgnoreCase));
+                        if (idProperty != null)
+                        {
+                            var instanceId = idProperty.Value.ToObject<int>();
+                            if (instanceId == 0)
+                            {
+                                property.objectReferenceValue = null;
+                                return null;
+                            }
+                            var obj = EditorUtility.InstanceIDToObject(instanceId);
+                            if (obj == null)
+                                return $"Object with instanceId {instanceId} not found";
+                            property.objectReferenceValue = obj;
+                            return null;
+                        }
+
+                        // Try assetPath (normalize key: assetPath, asset_path, path, etc.)
+                        var pathProperty = valueObj.Properties()
+                            .FirstOrDefault(p => p.Name.Replace("_", "").Equals("assetpath", StringComparison.OrdinalIgnoreCase)
+                                              || p.Name.Replace("_", "").Equals("path", StringComparison.OrdinalIgnoreCase));
+                        if (pathProperty != null)
+                        {
+                            string assetPath = pathProperty.Value.ToString();
+                            if (!assetPath.StartsWith("Assets"))
+                                assetPath = "Assets/" + assetPath.TrimStart('/');
+                            var obj = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+                            if (obj == null)
+                                return $"Asset not found at path: {assetPath}";
+                            property.objectReferenceValue = obj;
+                            return null;
+                        }
+
+                        // Nothing matched in the object
+                        return "ObjectReference object must contain instanceId or assetPath";
+                    }
+                    return "ObjectReference requires instanceId (int), assetPath (string), or { instanceId } / { assetPath }";
                 
                 case SerializedPropertyType.ArraySize:
                     property.arraySize = value.ToObject<int>();

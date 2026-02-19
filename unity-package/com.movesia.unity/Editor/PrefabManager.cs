@@ -10,6 +10,23 @@ using Newtonsoft.Json.Linq;
 
 /// <summary>
 /// Provides Prefab manipulation and query operations for the AI agent.
+/// Includes a unified smart endpoint (ManagePrefab) that chains sequential
+/// phases based on the fields provided — modeled after MaterialManager.
+///
+/// Phase 1 — Resolve/obtain the prefab (pick one):
+///   • prefabName                   → INSTANTIATE by name search
+///   • assetPath (no modify fields) → INSTANTIATE by path
+///   • instanceId + savePath        → CREATE prefab from scene GO
+///   • assetPath + modify fields    → resolve path only (skip to Phase 2)
+///   • instanceId alone             → APPLY overrides to prefab asset
+///
+/// Phase 2 — Modify (optional, chains after Phase 1):
+///   • componentType + properties   → MODIFY component on the prefab asset
+///
+/// Compound operations in a single call:
+///   - Create + Modify:  instanceId + savePath + componentType + properties
+///   - Instantiate + Modify:  prefabName + componentType + properties
+///   - Modify only:  assetPath + componentType + properties
 /// </summary>
 public static class PrefabManager
 {
@@ -55,6 +72,237 @@ public static class PrefabManager
         public int successCount;
         public int failCount;
         public HierarchyManipulator.PropertyResult[] results;
+    }
+
+    /// <summary>
+    /// Unified result for the smart prefab endpoint.
+    /// Reports which phases were executed (like MaterialManager).
+    /// </summary>
+    [Serializable]
+    public class UnifiedPrefabResult
+    {
+        public bool success;
+        public string error;
+
+        // Prefab / GameObject info (always populated on success)
+        public int instanceId;
+        public string name;
+        public string assetPath;
+
+        // Which phases were performed
+        public bool instantiated;
+        public bool created;
+        public bool modified;
+        public bool applied;
+
+        // Modification details (only when modified == true)
+        public string targetPath;
+        public string componentType;
+        public int successCount;
+        public int failCount;
+        public HierarchyManipulator.PropertyResult[] propertyResults;
+    }
+
+    // =========================================================================
+    // PUBLIC API — UNIFIED PREFAB ENDPOINT
+    // =========================================================================
+
+    /// <summary>
+    /// Smart unified prefab operation. Phases execute sequentially, each is optional:
+    ///
+    /// PHASE 1 — Resolve or obtain the prefab asset (pick one):
+    ///   • prefabName present                   → INSTANTIATE by name search
+    ///   • assetPath present (no create fields)  → INSTANTIATE by path
+    ///   • instanceId + savePath                 → CREATE prefab from scene GO
+    ///   • instanceId alone                      → APPLY overrides to prefab asset
+    ///
+    /// PHASE 2 — Modify (chains after Phase 1 if componentType + properties present):
+    ///   • Uses the assetPath resolved from Phase 1 (or provided directly)
+    ///   • Modifies component properties on the prefab asset
+    ///
+    /// This means you can do compound operations in a single call:
+    ///   - "Create prefab from GO + modify its Rigidbody"
+    ///   - "Instantiate prefab + modify its collider on the asset"
+    ///   - "Just modify" (assetPath + componentType + properties, no instantiation)
+    ///
+    /// All via a single "prefab" message type.
+    /// </summary>
+    public static UnifiedPrefabResult ManagePrefab(
+        // --- Identify target ---
+        int instanceId = 0,
+        string assetPath = null,
+        string prefabName = null,
+        // --- Instantiation params ---
+        int? parentInstanceId = null,
+        float[] position = null,
+        float[] rotation = null,
+        float[] scale = null,
+        // --- Creation params ---
+        string savePath = null,
+        // --- Modification params ---
+        string componentType = null,
+        string targetPath = null,
+        Dictionary<string, JToken> properties = null)
+    {
+        try
+        {
+            string resolvedAssetPath = null;
+            int resolvedInstanceId = 0;
+            string resolvedName = null;
+            bool didInstantiate = false;
+            bool didCreate = false;
+            bool didModify = false;
+            bool didApply = false;
+
+            bool hasModifyFields = !string.IsNullOrEmpty(componentType)
+                                   && properties != null && properties.Count > 0;
+
+            // =============================================================
+            // PHASE 1: Resolve or obtain the prefab asset
+            // =============================================================
+
+            // 1a. Has prefabName → INSTANTIATE by name search
+            if (!string.IsNullOrEmpty(prefabName))
+            {
+                var result = InstantiatePrefabByName(prefabName, parentInstanceId, position, rotation, scale);
+                if (!result.success)
+                    return Fail(result.error);
+
+                resolvedInstanceId = result.instanceId;
+                resolvedName = result.name;
+                resolvedAssetPath = result.assetPath;
+                didInstantiate = true;
+            }
+            // 1b. Has instanceId + savePath → CREATE prefab from scene GO
+            else if (instanceId != 0 && !string.IsNullOrEmpty(savePath))
+            {
+                var result = CreatePrefabFromGameObject(instanceId, savePath);
+                if (!result.success)
+                    return Fail(result.error);
+
+                resolvedInstanceId = result.instanceId;
+                resolvedName = result.name;
+                resolvedAssetPath = result.assetPath;
+                didCreate = true;
+            }
+            // 1c. Has assetPath → INSTANTIATE by path (only if no modify-only intent)
+            else if (!string.IsNullOrEmpty(assetPath) && !hasModifyFields)
+            {
+                var result = InstantiatePrefab(assetPath, parentInstanceId, position, rotation, scale);
+                if (!result.success)
+                    return Fail(result.error);
+
+                resolvedInstanceId = result.instanceId;
+                resolvedName = result.name;
+                resolvedAssetPath = result.assetPath;
+                didInstantiate = true;
+            }
+            // 1d. Has assetPath + modify fields → modify-only (resolve path, skip instantiation)
+            else if (!string.IsNullOrEmpty(assetPath) && hasModifyFields)
+            {
+                // Just resolve the path — Phase 2 will do the work
+                resolvedAssetPath = assetPath;
+            }
+            // 1e. Has instanceId alone → APPLY overrides
+            else if (instanceId != 0)
+            {
+                var result = ApplyPrefabInstance(instanceId);
+                if (!result.success)
+                    return Fail(result.error);
+
+                resolvedInstanceId = result.instanceId;
+                resolvedName = result.name;
+                resolvedAssetPath = result.assetPath;
+                didApply = true;
+            }
+            else
+            {
+                // Nothing matched — not enough info
+                return Fail(
+                    "Could not determine prefab operation. Provide: " +
+                    "prefabName (instantiate by name), " +
+                    "assetPath (instantiate by path or modify), " +
+                    "instanceId + savePath (create from GO), " +
+                    "or instanceId alone (apply overrides).");
+            }
+
+            // =============================================================
+            // PHASE 2: Modify prefab asset (if componentType + properties)
+            // =============================================================
+
+            int modifySuccessCount = 0;
+            int modifyFailCount = 0;
+            HierarchyManipulator.PropertyResult[] modifyResults = null;
+            string modifyTargetPath = null;
+            string modifyComponentType = null;
+
+            if (hasModifyFields && !string.IsNullOrEmpty(resolvedAssetPath))
+            {
+                var modResult = ModifyPrefab(resolvedAssetPath, componentType, properties, targetPath);
+
+                modifySuccessCount = modResult.successCount;
+                modifyFailCount = modResult.failCount;
+                modifyResults = modResult.results;
+                modifyTargetPath = modResult.targetPath;
+                modifyComponentType = modResult.componentType;
+                didModify = true;
+
+                if (!modResult.success)
+                {
+                    // Phase 1 succeeded but Phase 2 failed — report partial success
+                    return new UnifiedPrefabResult
+                    {
+                        success = false,
+                        error = modResult.error ?? $"{modifyFailCount} properties failed to set",
+                        instanceId = resolvedInstanceId,
+                        name = resolvedName,
+                        assetPath = resolvedAssetPath,
+                        instantiated = didInstantiate,
+                        created = didCreate,
+                        modified = true, // attempted
+                        applied = didApply,
+                        targetPath = modifyTargetPath,
+                        componentType = modifyComponentType,
+                        successCount = modifySuccessCount,
+                        failCount = modifyFailCount,
+                        propertyResults = modifyResults
+                    };
+                }
+            }
+
+            // =============================================================
+            // BUILD RESPONSE
+            // =============================================================
+
+            return new UnifiedPrefabResult
+            {
+                success = true,
+                instanceId = resolvedInstanceId,
+                name = resolvedName,
+                assetPath = resolvedAssetPath,
+                instantiated = didInstantiate,
+                created = didCreate,
+                modified = didModify,
+                applied = didApply,
+                targetPath = modifyTargetPath,
+                componentType = modifyComponentType,
+                successCount = modifySuccessCount,
+                failCount = modifyFailCount,
+                propertyResults = modifyResults
+            };
+        }
+        catch (Exception ex)
+        {
+            return new UnifiedPrefabResult { success = false, error = ex.Message };
+        }
+    }
+
+    /// <summary>
+    /// Shorthand for returning a failed UnifiedPrefabResult.
+    /// </summary>
+    private static UnifiedPrefabResult Fail(string error)
+    {
+        return new UnifiedPrefabResult { success = false, error = error };
     }
 
     // --- Query Operations ---
@@ -296,7 +544,11 @@ public static class PrefabManager
             }
 
             // Ensure directory exists
-            string directory = Path.GetDirectoryName(savePath);
+            string directory = Path.GetDirectoryName(savePath)?.Replace('\\', '/');
+            if (string.IsNullOrEmpty(directory))
+            {
+                return new PrefabResult { success = false, error = $"Invalid save path: {savePath}" };
+            }
             if (!AssetDatabase.IsValidFolder(directory))
             {
                 // Create nested directories
@@ -363,7 +615,7 @@ public static class PrefabManager
             // Determine variant path
             if (string.IsNullOrEmpty(variantPath))
             {
-                string directory = Path.GetDirectoryName(sourcePrefabPath);
+                string directory = Path.GetDirectoryName(sourcePrefabPath)?.Replace('\\', '/');
                 string baseName = Path.GetFileNameWithoutExtension(sourcePrefabPath);
                 variantPath = $"{directory}/{baseName}_Variant.prefab";
             }
