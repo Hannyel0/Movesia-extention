@@ -15,18 +15,21 @@ import { TavilySearch } from '@langchain/tavily'
 import { MemorySaver } from '@langchain/langgraph'
 import type { BaseCheckpointSaver } from '@langchain/langgraph'
 import { unityTools, setUnityManager } from './unity-tools/index'
-import { UNITY_AGENT_PROMPT } from './prompts'
+import { probuilderTools } from './subagent-tools/index'
+import { UNITY_AGENT_PROMPT, PROBUILDER_AGENT_PROMPT } from './prompts'
 import type { UnityManager } from './UnityConnection/index'
 
 // Use require for CJS compatibility (moduleResolution: node)
 const { createAgent, todoListMiddleware } = require('langchain')
 const {
   createFilesystemMiddleware,
+  createSubAgentMiddleware,
   CompositeBackend,
   StateBackend,
   StoreBackend,
   FilesystemBackend,
 } = require('deepagents')
+import type { SubAgent } from 'deepagents'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -81,14 +84,21 @@ export const UNITY_PROJECT_PATH_RESOLVED = _unityProjectPath
  * Create the ChatOpenAI model configured for OpenRouter.
  * API key is read from environment (set by extension before agent creation).
  */
-export function createModel(apiKey?: string) {
+export function createModel(apiKey?: string, modelName?: string) {
   return new ChatOpenAI({
-    modelName: 'minimax/minimax-m2.5:nitro',
+    modelName: modelName ?? 'minimax/minimax-m2.5:nitro',
     configuration: {
       baseURL: 'https://openrouter.ai/api/v1',
     },
     apiKey: apiKey ?? process.env.OPENROUTER_API_KEY,
   })
+}
+
+/**
+ * Create a model for subagents (uses a faster/cheaper model).
+ */
+export function createSubAgentModel(apiKey?: string) {
+  return createModel(apiKey, 'minimax/minimax-m2.5:nitro')
 }
 
 // Note: No default model instance - models should be created via createModel()
@@ -131,6 +141,18 @@ function getAllTools(tavilyApiKey?: string): any[] {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
+ * ProBuilder subagent definition.
+ * Specialized for 3D mesh creation and editing with ProBuilder.
+ */
+const probuilderSubagent: SubAgent = {
+  name: 'probuilder-expert',
+  description:
+    'Delegate to this agent for ANY 3D geometry or mesh work: creating shapes (cubes, walls, stairs, arches, cylinders, doors, pipes, tori), editing meshes (extrude, bevel, delete faces, merge), flipping normals to make rooms, assigning materials to specific faces, level prototyping, or any ProBuilder operation. Use when the user mentions: build, create shape, mesh, geometry, wall, room, floor, ceiling, stairs, extrude, bevel, level design, prototype, greybox, or whitebox.',
+  systemPrompt: PROBUILDER_AGENT_PROMPT,
+  tools: probuilderTools as any,
+}
+
+/**
  * Create the middleware stack for the agent.
  *
  * Middleware provides:
@@ -141,8 +163,9 @@ function getAllTools(tavilyApiKey?: string): any[] {
  *    - default: FilesystemBackend (real disk access at Unity project root)
  *    - /scratch/: StateBackend (ephemeral scratch space, current thread only)
  *    - /memories/: StoreBackend (persistent memories across threads, if store available)
+ * 3. SubAgentMiddleware - Delegates specialized tasks to subagents (ProBuilder expert)
  */
-function createMiddlewareStack(projectPath?: string): any[] {
+function createMiddlewareStack(projectPath?: string, subagentLlm?: any): any[] {
   const middleware: any[] = []
 
   console.log(
@@ -191,6 +214,20 @@ function createMiddlewareStack(projectPath?: string): any[] {
     console.warn(
       '[Agent] ⚠️  No projectPath — FilesystemMiddleware SKIPPED (no file access)'
     )
+  }
+
+  // 3. SubAgent middleware - provides task() tool for delegating to specialists
+  if (subagentLlm) {
+    middleware.push(
+      createSubAgentMiddleware({
+        defaultModel: subagentLlm,
+        defaultTools: [],
+        subagents: [probuilderSubagent],
+      })
+    )
+    console.log('[Agent] ✅ SubAgentMiddleware added (probuilder-expert)')
+  } else {
+    console.warn('[Agent] ⚠️  No LLM provided — SubAgentMiddleware SKIPPED')
   }
 
   console.log(
@@ -317,9 +354,12 @@ export function createMovesiaAgent(options: CreateAgentOptions = {}) {
     console.log('[Agent] ✅ setUnityManager registered')
   }
 
-  // Create model with provided or env API key
+  // Create models with provided or env API key
   const llm = createModel(openRouterApiKey)
   console.log(`[Agent] ✅ LLM created: ${(llm as any).modelName ?? 'unknown'}`)
+
+  const subagentLlm = createSubAgentModel(openRouterApiKey)
+  console.log(`[Agent] ✅ SubAgent LLM created: ${(subagentLlm as any).modelName ?? 'unknown'}`)
 
   // Get tools with optional internet search
   const tools = getAllTools(tavilyApiKey)
@@ -329,8 +369,8 @@ export function createMovesiaAgent(options: CreateAgentOptions = {}) {
       .join(', ')}]`
   )
 
-  // Build middleware stack (todo tracking + filesystem access)
-  const middleware = createMiddlewareStack(projectPath)
+  // Build middleware stack (todo tracking + filesystem access + subagents)
+  const middleware = createMiddlewareStack(projectPath, subagentLlm)
 
   // Create the agent with langchain's createAgent (supports middleware)
   console.log('[Agent] Creating agent with createAgent()...')
@@ -353,4 +393,4 @@ export function createMovesiaAgent(options: CreateAgentOptions = {}) {
 export type MovesiaAgent = ReturnType<typeof createMovesiaAgent>
 
 // Note: No default agent instance - agents should be created via createMovesiaAgent()
-// with explicit configuration from the AgentService.
+// with explicit configuration from the AgentService.     

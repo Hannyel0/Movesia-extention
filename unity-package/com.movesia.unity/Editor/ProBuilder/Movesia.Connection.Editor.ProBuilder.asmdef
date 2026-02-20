@@ -1,7 +1,10 @@
 {
-    "name": "Movesia.Connection.Editor",
+    "name": "Movesia.Connection.Editor.ProBuilder",
     "rootNamespace": "Movesia.Connection",
     "references": [
+        "Movesia.Connection.Editor",
+        "Unity.ProBuilder",
+        "Unity.ProBuilder.Editor",
         "Movesia.WebSocket"
     ],
     "includePlatforms": [
@@ -14,7 +17,9 @@
         "Newtonsoft.Json.dll"
     ],
     "autoReferenced": true,
-    "defineConstraints": [],
+    "defineConstraints": [
+        "MOVESIA_PROBUILDER"
+    ],
     "versionDefines": [
         {
             "name": "com.unity.probuilder",

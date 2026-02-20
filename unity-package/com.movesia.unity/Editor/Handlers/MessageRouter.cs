@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -10,6 +11,29 @@ using Newtonsoft.Json.Linq;
 /// </summary>
 public static class MessageRouter
 {
+    // =========================================================================
+    // DYNAMIC HANDLER REGISTRATION — allows optional assemblies (e.g. ProBuilder)
+    // to register message handlers without the main assembly referencing them.
+    // =========================================================================
+
+    /// <summary>
+    /// Handler delegate for dynamically registered message types.
+    /// </summary>
+    public delegate Task MessageHandlerDelegate(string requestId, JToken body);
+
+    private static readonly Dictionary<string, MessageHandlerDelegate> _dynamicHandlers =
+        new Dictionary<string, MessageHandlerDelegate>();
+
+    /// <summary>
+    /// Register a handler for a message type. Called by optional assemblies
+    /// via [InitializeOnLoad] static constructors.
+    /// </summary>
+    public static void RegisterHandler(string messageType, MessageHandlerDelegate handler)
+    {
+        _dynamicHandlers[messageType] = handler;
+        Debug.Log($"📦 Registered dynamic handler for message type: {messageType}");
+    }
+
     // =========================================================================
     // FUZZY KEY NORMALIZATION — protects against LLM field-name hallucination
     // =========================================================================
@@ -23,7 +47,7 @@ public static class MessageRouter
     /// Only renames keys that have a known canonical form; unknown keys pass through unchanged.
     /// Recurses into nested JObjects that are listed in nestedKeys.
     /// </summary>
-    internal static JObject NormalizeKeys(JToken token, Dictionary<string, string> canonicalMap, HashSet<string> nestedKeys = null)
+    public static JObject NormalizeKeys(JToken token, Dictionary<string, string> canonicalMap, HashSet<string> nestedKeys = null)
     {
         if (token == null || token.Type != JTokenType.Object)
             return token as JObject;
@@ -91,10 +115,10 @@ public static class MessageRouter
     };
 
     // Which keys in MaterialCanonicalMap contain nested objects that need their own normalization
-    internal static readonly HashSet<string> MaterialNestedKeys = new HashSet<string> { "assignTo" };
+    public static readonly HashSet<string> MaterialNestedKeys = new HashSet<string> { "assignTo" };
 
     // Map from nested key name → its canonical map
-    internal static readonly Dictionary<string, Dictionary<string, string>> NestedCanonicalMaps =
+    public static readonly Dictionary<string, Dictionary<string, string>> NestedCanonicalMaps =
         new Dictionary<string, Dictionary<string, string>>
     {
         { "assignTo", AssignToCanonicalMap }
@@ -284,8 +308,26 @@ public static class MessageRouter
                     await CompilationHandlers.HandleGetAvailableTypes(requestId, body);
                     break;
 
+                // --- Screenshot ---
+                case "capture_screenshot":
+                    await ScreenshotHandlers.HandleCaptureScreenshot(requestId, body);
+                    break;
+
+                // --- Spatial Context ---
+                case "get_spatial_context":
+                    await SpatialHandlers.HandleGetSpatialContext(requestId, body);
+                    break;
+
                 default:
-                    Debug.Log($"🔧 Unhandled message type: {type}");
+                    // Check dynamically registered handlers (from optional assemblies like ProBuilder)
+                    if (_dynamicHandlers.TryGetValue(type, out var handler))
+                    {
+                        await handler(requestId, body);
+                    }
+                    else
+                    {
+                        Debug.Log($"🔧 Unhandled message type: {type}");
+                    }
                     break;
             }
         }
@@ -297,7 +339,7 @@ public static class MessageRouter
 
     // --- Response Helper ---
 
-    internal static async Task SendResponse(string requestId, string type, object body)
+    public static async Task SendResponse(string requestId, string type, object body)
     {
         if (type != "pong") Debug.Log($"📤 SendResponse: requestId={requestId ?? "(null)"}, type={type}");
         await WebSocketClient.Send(type, body, requestId);

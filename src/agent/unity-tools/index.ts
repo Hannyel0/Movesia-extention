@@ -1,5 +1,5 @@
 /**
- * Unity Tools Package - The 8 Tools for Unity Editor manipulation.
+ * Unity Tools Package - The 8 Core Tools for Unity Editor manipulation.
  *
  * This package provides a clean interface for AI agents to interact with the Unity Editor
  * through WebSocket communication via the UnityManager.
@@ -13,6 +13,8 @@
  * - unity_refresh: The Compiler - script compilation
  * - unity_deletion: The Janitor - asset deletion (moves to OS trash)
  * - unity_material: The Artist - material creation, modification, and assignment
+ *
+ * Note: Subagent-specific tools (probuilder, screenshot) are in ../subagent-tools/
  *
  * Setup:
  *     Before using tools, register the Unity manager:
@@ -48,7 +50,8 @@ import { unityDeletion } from './deletion';
 import { unityMaterial } from './material';
 
 /**
- * The 8 Unity Tools as an array for easy registration with LangGraph.
+ * The 8 core Unity Tools as an array for easy registration with LangGraph.
+ * Note: Subagent tools (probuilder, screenshot) are in ../subagent-tools/
  *
  * Usage:
  *     import { unityTools } from './unity-tools';
